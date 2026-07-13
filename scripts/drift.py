@@ -1,6 +1,6 @@
 import json
 
-with open("terraform/tfplan.json") as f:
+with open("./environments/dev/tfplan.json") as f:
     plan = json.load(f)
 
 changes = plan.get("resource_changes", [])

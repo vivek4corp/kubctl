@@ -2,7 +2,7 @@ import json
 import os
 import requests
 
-TOKEN = os.environ["GITHUB_TOKEN_AI"]
+TOKEN = os.environ["MODELS_PAT"]
 
 MODEL = "openai/gpt-4.1"
 

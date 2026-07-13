@@ -1,0 +1,364 @@
+name: Terraform Apply
+
+
+on:
+
+  workflow_dispatch:
+
+    inputs:
+
+      environment:
+
+        description: "Deployment environment"
+
+        required: true
+
+        default: dev
+
+        type: choice
+
+        options:
+
+          - dev
+          - test
+          - prod
+
+
+
+permissions:
+
+  id-token: write
+
+  contents: read
+
+
+
+env:
+
+
+  TF_VERSION: "1.8.5"
+
+
+
+jobs:
+
+
+
+# ---------------------------------------
+# Terraform Plan
+# ---------------------------------------
+
+  terraform-plan:
+
+
+    name: Terraform Plan
+
+
+    runs-on: ubuntu-latest
+
+
+
+    environment:
+
+      name: ${{ inputs.environment }}
+
+
+
+    outputs:
+
+      plan-file: terraform.tfplan
+
+
+
+    steps:
+
+
+
+    - name: Checkout
+
+      uses: actions/checkout@v4
+
+
+
+    - name: Azure Login
+
+      uses: azure/login@v2
+
+      with:
+
+        client-id: ${{ secrets.AZURE_CLIENT_ID }}
+
+        tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+
+        subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+
+
+
+    - name: Setup Terraform
+
+      uses: hashicorp/setup-terraform@v3
+
+      with:
+
+        terraform_version: ${{ env.TF_VERSION }}
+
+
+
+
+    - name: Terraform Init
+
+      working-directory:
+
+        ./environments/${{ inputs.environment }}
+
+      run:
+
+        terraform init
+
+
+
+
+    - name: Terraform Validate
+
+      working-directory:
+
+        ./environments/${{ inputs.environment }}
+
+      run:
+
+        terraform validate
+
+
+
+
+    - name: Terraform Plan
+
+      working-directory:
+
+        ./environments/${{ inputs.environment }}
+
+      run:
+
+
+        terraform plan \
+        -out=terraform.tfplan
+
+
+
+
+    - name: Upload Plan
+
+      uses: actions/upload-artifact@v4
+
+
+      with:
+
+
+        name:
+
+          terraform-plan
+
+
+
+        path:
+
+
+          ./environments/${{ inputs.environment }}/terraform.tfplan
+
+
+
+
+
+# ---------------------------------------
+# Manual Approval
+# ---------------------------------------
+
+  approval:
+
+
+    name: Manual Approval
+
+
+    needs:
+
+      - terraform-plan
+
+
+
+    runs-on: ubuntu-latest
+
+
+
+    environment:
+
+
+      name:
+
+        ${{ inputs.environment }}
+
+
+
+
+    steps:
+
+
+    - name:
+
+        Waiting for approval
+
+
+      run:
+
+
+        echo "Waiting for environment approval"
+
+
+
+
+
+# ---------------------------------------
+# Terraform Apply
+# ---------------------------------------
+
+
+  terraform-apply:
+
+
+    name: Terraform Apply
+
+
+
+    needs:
+
+
+      - approval
+
+
+
+    runs-on: ubuntu-latest
+
+
+
+    environment:
+
+
+      name:
+
+        ${{ inputs.environment }}
+
+
+
+
+    steps:
+
+
+
+    - name: Checkout
+
+      uses: actions/checkout@v4
+
+
+
+
+    - name: Download Terraform Plan
+
+      uses: actions/download-artifact@v4
+
+
+      with:
+
+
+        name:
+
+          terraform-plan
+
+
+
+        path:
+
+
+          ./environments/${{ inputs.environment }}
+
+
+
+
+
+
+    - name: Azure Login
+
+      uses: azure/login@v2
+
+
+      with:
+
+        client-id:
+
+          ${{ secrets.AZURE_CLIENT_ID }}
+
+
+        tenant-id:
+
+          ${{ secrets.AZURE_TENANT_ID }}
+
+
+        subscription-id:
+
+          ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+
+
+
+
+
+    - name: Setup Terraform
+
+      uses:
+
+        hashicorp/setup-terraform@v3
+
+
+      with:
+
+
+        terraform_version:
+
+          ${{ env.TF_VERSION }}
+
+
+
+
+
+
+    - name: Terraform Init
+
+      working-directory:
+
+
+        ./environments/${{ inputs.environment }}
+
+
+
+      run:
+
+
+        terraform init
+
+
+
+
+
+    - name: Terraform Apply
+
+
+      working-directory:
+
+
+        ./environments/${{ inputs.environment }}
+
+
+
+      run:
+
+
+        terraform apply terraform.tfplan

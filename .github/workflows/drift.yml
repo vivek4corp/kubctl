@@ -135,6 +135,13 @@ jobs:
 
     - name: Resolve Terraform Modules
       run: python scripts/module_resolver.py
+
+      ##########################################################
+      # Parse Terraform Configuration
+      ##########################################################
+
+    - name: Parse Terraform Configuration
+      run: python scripts/terraform_parser.py
     ##########################################################
     # Upload Reports
     ##########################################################

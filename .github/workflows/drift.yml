@@ -50,6 +50,13 @@ jobs:
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform init
 
+      ##########################################################
+      # Resolve Terraform Modules
+      ##########################################################
+
+    - name: Resolve Terraform Modules
+      run: python scripts/module_resolver.py
+
     ##########################################################
     # Detect Drift
     ##########################################################

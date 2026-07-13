@@ -107,6 +107,13 @@ jobs:
     - name: Analyze Drift
       run: python scripts/drift.py
 
+      ##########################################################
+      # Prepare Terraform Changes
+      ##########################################################
+
+    - name: Prepare Terraform Changes
+      run: python scripts/terraform_modifier.py
+
     ##########################################################
     # Azure Activity Logs
     ##########################################################

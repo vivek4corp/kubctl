@@ -43,7 +43,7 @@ body = {
 }
 
 response = requests.post(
-    "https://models.inference.ai.azure.com/chat/completions",
+    "https://models.github.ai/inference/chat/completions",
     headers=headers,
     json=body,
     timeout=60

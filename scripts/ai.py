@@ -1,59 +1,75 @@
 import json
 import os
+import sys
 import requests
 
-TOKEN = os.environ["MODELS_PAT"]
+TOKEN = os.getenv("MODELS_PAT")
+
+if not TOKEN:
+    print("ERROR: MODELS_PAT environment variable not found.")
+    sys.exit(1)
 
 MODEL = "openai/gpt-4.1"
 
-with open("reports/drift.json") as f:
+with open("reports/drift.json", "r") as f:
     drift = json.load(f)
 
 prompt = f"""
 You are a Terraform Drift Analysis Agent.
 
-Analyze the following infrastructure drift.
+Analyze the following Terraform drift and provide:
 
-Explain:
+1. Summary
+2. Risk
+3. Impact
+4. Recommendation
+5. Priority (High/Medium/Low)
 
-1. Risk
-2. Impact
-3. Recommendation
-4. Priority
-
-Drift:
+Terraform Drift:
 
 {json.dumps(drift, indent=2)}
 """
 
 headers = {
+    "Accept": "application/vnd.github+json",
     "Authorization": f"Bearer {TOKEN}",
+    "X-GitHub-Api-Version": "2022-11-28",
     "Content-Type": "application/json"
 }
 
-body = {
+payload = {
     "model": MODEL,
     "messages": [
         {
             "role": "user",
             "content": prompt
         }
-    ],
-    "temperature": 0.2
+    ]
 }
 
 response = requests.post(
     "https://models.github.ai/inference/chat/completions",
     headers=headers,
-    json=body,
-    timeout=60
+    json=payload,
+    timeout=120
 )
 
-response.raise_for_status()
+print("Status Code:", response.status_code)
 
-answer = response.json()["choices"][0]["message"]["content"]
+if not response.ok:
+    print("Response:")
+    print(response.text)
+    response.raise_for_status()
 
-print(answer)
+result = response.json()
+
+print(json.dumps(result, indent=2))
+
+answer = result["choices"][0]["message"]["content"]
+
+os.makedirs("reports", exist_ok=True)
 
 with open("reports/summary.md", "w") as f:
     f.write(answer)
+
+print("AI summary written to reports/summary.md")

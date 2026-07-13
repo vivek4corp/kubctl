@@ -3,3 +3,6 @@ azure-mgmt-resource
 azure-monitor-query
 requests
 jinja2
+requests
+jinja2
+markdown

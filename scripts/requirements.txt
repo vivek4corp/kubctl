@@ -6,3 +6,6 @@ jinja2
 requests
 jinja2
 markdown
+requests
+python-hcl2
+GitPython

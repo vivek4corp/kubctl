@@ -3,6 +3,10 @@ import os
 import sys
 import requests
 
+# ============================================================
+# Configuration
+# ============================================================
+
 TOKEN = os.getenv("MODELS_PAT")
 
 if not TOKEN:
@@ -11,24 +15,75 @@ if not TOKEN:
 
 MODEL = "openai/gpt-4.1"
 
-with open("reports/drift.json", "r") as f:
-    drift = json.load(f)
+# ============================================================
+# Read Drift Report
+# ============================================================
+
+try:
+    with open("reports/drift.json", "r") as f:
+        drift = json.load(f)
+except FileNotFoundError:
+    print("ERROR: reports/drift.json not found.")
+    sys.exit(1)
+
+# ============================================================
+# Create Compact Summary
+# (Avoid sending huge Terraform JSON)
+# ============================================================
+
+resources = []
+
+for item in drift:
+
+    resource = {
+        "resource": item.get("resource"),
+        "type": item.get("type"),
+        "actions": item.get("actions"),
+        "changed_by": item.get("changed_by", "Unknown"),
+        "time": item.get("time", "Unknown")
+    }
+
+    # Only include changed attribute names
+    after = item.get("after")
+
+    if isinstance(after, dict):
+        resource["changed_properties"] = list(after.keys())[:20]
+
+    resources.append(resource)
+
+# ============================================================
+# Prompt
+# ============================================================
 
 prompt = f"""
-You are a Terraform Drift Analysis Agent.
+You are an expert Azure DevOps, Terraform and Cloud Security Architect.
 
-Analyze the following Terraform drift and provide:
+Analyze the Terraform drift.
 
-1. Summary
-2. Risk
-3. Impact
-4. Recommendation
-5. Priority (High/Medium/Low)
+For each resource provide:
+
+- Resource Name
+- Drift Type
+- Risk
+- Impact
+- Recommendation
+- Priority (High/Medium/Low)
+
+Finally provide:
+
+1. Executive Summary
+2. Overall Risk
+3. Suggested Terraform Actions
+4. Best Practices
 
 Terraform Drift:
 
-{json.dumps(drift, indent=2)}
+{json.dumps(resources, indent=2)}
 """
+
+# ============================================================
+# GitHub Models Request
+# ============================================================
 
 headers = {
     "Accept": "application/vnd.github+json",
@@ -41,11 +96,19 @@ payload = {
     "model": MODEL,
     "messages": [
         {
+            "role": "system",
+            "content": "You are a Terraform Drift Detection Expert."
+        },
+        {
             "role": "user",
             "content": prompt
         }
-    ]
+    ],
+    "temperature": 0.2,
+    "max_tokens": 1200
 }
+
+print("Calling GitHub Models...")
 
 response = requests.post(
     "https://models.github.ai/inference/chat/completions",
@@ -63,13 +126,19 @@ if not response.ok:
 
 result = response.json()
 
-print(json.dumps(result, indent=2))
-
 answer = result["choices"][0]["message"]["content"]
+
+# ============================================================
+# Save Report
+# ============================================================
 
 os.makedirs("reports", exist_ok=True)
 
-with open("reports/summary.md", "w") as f:
+with open("reports/summary.md", "w", encoding="utf-8") as f:
     f.write(answer)
 
 print("AI summary written to reports/summary.md")
+
+print("\n================ AI SUMMARY ================\n")
+print(answer)
+print("\n===========================================\n")

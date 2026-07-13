@@ -73,6 +73,13 @@ jobs:
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform show -json tfplan > tfplan.json
 
+##########################################################
+# Export State
+##########################################################
+
+    - name: Export Terraform State
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform show -json > tfstate.json
     ##########################################################
     # Python
     ##########################################################

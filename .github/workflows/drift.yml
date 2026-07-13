@@ -119,7 +119,7 @@ jobs:
 
     - name: AI Summary
       env:
-        GITHUB_TOKEN_AI: ${{ secrets.GITHUB_TOKEN_AI }}
+        GITHUB_TOKEN_AI: ${{ secrets.MODELS_PAT }}
       run: python scripts/ai.py
 
     ##########################################################

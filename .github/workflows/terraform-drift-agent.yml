@@ -29,6 +29,7 @@ env:
 
 
 
+
 jobs:
 
 
@@ -47,12 +48,14 @@ jobs:
 
 
     ##########################################################
-    # Checkout
+    # Checkout Repository
     ##########################################################
 
     - name: Checkout Repository
 
       uses: actions/checkout@v4
+
+
 
 
 
@@ -74,6 +77,8 @@ jobs:
 
 
 
+
+
     ##########################################################
     # Terraform Setup
     ##########################################################
@@ -90,6 +95,9 @@ jobs:
 
 
 
+
+
+
     ##########################################################
     # Terraform Init
     ##########################################################
@@ -103,8 +111,27 @@ jobs:
 
 
 
+
+
     ##########################################################
-    # Terraform Drift Detection
+    # Create Reports Directory
+    ##########################################################
+
+    - name: Create Reports Directory
+
+      run: |
+
+        mkdir -p reports
+
+        echo "Terraform Drift Scan Started" > reports/status.txt
+
+
+
+
+
+
+    ##########################################################
+    # Terraform Plan Drift Detection
     ##########################################################
 
     - name: Terraform Plan
@@ -118,10 +145,12 @@ jobs:
 
       run: |
 
+
         terraform plan \
           -out=tfplan \
           -detailed-exitcode \
           -input=false
+
 
 
         EXIT_CODE=$?
@@ -140,17 +169,23 @@ jobs:
 
 
 
+
+
     ##########################################################
     # Export Terraform Plan JSON
     ##########################################################
 
     - name: Export Plan JSON
 
+
       if: steps.plan.outputs.exitcode == '2'
+
 
       working-directory: ${{ env.TF_WORKING_DIR }}
 
+
       run: |
+
 
         terraform show \
         -json tfplan \
@@ -159,20 +194,27 @@ jobs:
 
 
 
+
+
     ##########################################################
-    # Export Current Terraform State
+    # Export Terraform State
     ##########################################################
 
     - name: Export Terraform State
 
+
       if: steps.plan.outputs.exitcode == '2'
+
 
       working-directory: ${{ env.TF_WORKING_DIR }}
 
-      run: |
 
-        terraform state pull \
-        > terraform.tfstate.json
+      run:
+
+
+        terraform state pull > terraform.tfstate.json
+
+
 
 
 
@@ -183,21 +225,31 @@ jobs:
 
     - name: Setup Python
 
+
       if: steps.plan.outputs.exitcode == '2'
+
 
       uses: actions/setup-python@v5
 
+
       with:
+
 
         python-version: "3.12"
 
 
 
+
+
+
     - name: Install Dependencies
+
 
       if: steps.plan.outputs.exitcode == '2'
 
+
       run: |
+
 
         python -m pip install --upgrade pip
 
@@ -206,47 +258,44 @@ jobs:
 
 
 
-    ##########################################################
-    # Reports Directory
-    ##########################################################
-
-    - name: Create Reports Directory
-
-      if: steps.plan.outputs.exitcode == '2'
-
-      run:
-
-        mkdir -p reports
-
-
 
 
     ##########################################################
-    # Analyze Drift
+    # Drift Analysis
     ##########################################################
 
     - name: Analyze Drift
 
+
       if: steps.plan.outputs.exitcode == '2'
 
+
       run:
+
 
         python scripts/drift.py
 
 
 
 
+
+
     ##########################################################
-    # Prepare Terraform Changes
+    # Terraform Configuration Update
     ##########################################################
 
     - name: Prepare Terraform Changes
 
+
       if: steps.plan.outputs.exitcode == '2'
+
 
       run:
 
+
         python scripts/terraform_modifier.py
+
+
 
 
 
@@ -257,56 +306,76 @@ jobs:
 
     - name: Find Who Changed Infrastructure
 
+
       if: steps.plan.outputs.exitcode == '2'
 
+
       run:
+
 
         python scripts/activitylog.py
 
 
 
 
+
+
     ##########################################################
-    # Terraform Module Resolver
+    # Resolve Modules
     ##########################################################
 
     - name: Resolve Terraform Modules
 
+
       if: steps.plan.outputs.exitcode == '2'
 
+
       run:
+
 
         python scripts/module_resolver.py
 
 
 
 
+
+
     ##########################################################
-    # Terraform Parser
+    # Parse Terraform Configuration
     ##########################################################
 
     - name: Parse Terraform Configuration
 
+
       if: steps.plan.outputs.exitcode == '2'
 
+
       run:
+
 
         python scripts/terraform_parser.py
 
 
 
 
+
+
     ##########################################################
-    # Generate Report
+    # Generate HTML Report
     ##########################################################
 
     - name: Generate Report
 
+
       if: steps.plan.outputs.exitcode == '2'
+
 
       run:
 
+
         python scripts/report.py
+
+
 
 
 
@@ -317,35 +386,48 @@ jobs:
 
     - name: AI Summary
 
+
       if: steps.plan.outputs.exitcode == '2'
+
 
       env:
 
+
         MODELS_PAT: ${{ secrets.MODELS_PAT }}
 
+
       run:
+
 
         python scripts/ai.py
 
 
 
 
+
+
     ##########################################################
-    # Create Drift Fix Pull Request
+    # Create Drift Fix PR
     ##########################################################
 
     - name: Create Drift Fix PR
 
+
       if: steps.plan.outputs.exitcode == '2'
 
+
       env:
+
 
         GH_TOKEN: ${{ github.token }}
 
 
       run:
 
+
         python scripts/github_pr.py
+
+
 
 
 
@@ -356,39 +438,56 @@ jobs:
 
     - name: Upload Reports
 
+
       if: always()
+
 
       uses: actions/upload-artifact@v4
 
 
       with:
 
+
         name: terraform-drift-report
+
 
         path: reports/
 
 
+        if-no-files-found: ignore
+
+
+
 
 
 
     ##########################################################
-    # Upload Terraform Plan
+    # Upload Terraform Plan JSON
     ##########################################################
 
     - name: Upload Terraform Plan
 
+
       if: always()
+
 
       uses: actions/upload-artifact@v4
 
 
       with:
 
+
         name: terraform-plan-json
+
 
         path:
 
+
           ${{ env.TF_WORKING_DIR }}/tfplan.json
+
+
+        if-no-files-found: ignore
+
 
 
 
@@ -400,6 +499,7 @@ jobs:
 
     - name: Publish Summary
 
+
       run: |
 
 
@@ -408,20 +508,27 @@ jobs:
         echo "" >> $GITHUB_STEP_SUMMARY
 
 
+
         if [ "${{ steps.plan.outputs.exitcode }}" == "2" ]; then
+
 
           echo "⚠️ Drift detected" >> $GITHUB_STEP_SUMMARY
 
-          echo "Terraform remediation PR created." >> $GITHUB_STEP_SUMMARY
+          echo "Terraform remediation PR generated." >> $GITHUB_STEP_SUMMARY
+
 
 
         elif [ "${{ steps.plan.outputs.exitcode }}" == "0" ]; then
 
+
           echo "✅ No drift detected" >> $GITHUB_STEP_SUMMARY
+
 
 
         else
 
+
           echo "❌ Terraform execution failed" >> $GITHUB_STEP_SUMMARY
+
 
         fi

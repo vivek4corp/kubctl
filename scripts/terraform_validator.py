@@ -2,19 +2,21 @@ import subprocess
 import sys
 import os
 
-TF_DIR = "environments/dev"
+TF_DIR = os.getenv("TF_WORKING_DIR", "environments/dev")
 
 
 def run(cmd):
 
-    print(f"\nRunning: {cmd}")
+    print("=" * 70)
+    print(f"Running: {cmd}")
+    print("=" * 70)
 
     result = subprocess.run(
         cmd,
         cwd=TF_DIR,
         shell=True,
-        capture_output=True,
-        text=True
+        text=True,
+        capture_output=True
     )
 
     print(result.stdout)
@@ -25,34 +27,27 @@ def run(cmd):
     return result.returncode
 
 
-print("=" * 60)
-print("Terraform Validation")
-print("=" * 60)
+def main():
 
-# ------------------------------------
-# terraform fmt
-# ------------------------------------
+    # terraform fmt
+    if run("terraform fmt -recursive") != 0:
+        print("terraform fmt failed")
+        sys.exit(1)
 
-if run("terraform fmt -recursive") != 0:
-    print("terraform fmt failed")
-    sys.exit(1)
+    # terraform validate
+    if run("terraform validate") != 0:
+        print("terraform validate failed")
+        sys.exit(1)
 
-# ------------------------------------
-# terraform validate
-# ------------------------------------
+    # terraform plan
+    code = run("terraform plan -input=false")
 
-if run("terraform validate") != 0:
-    print("terraform validate failed")
-    sys.exit(1)
+    if code != 0:
+        print("terraform plan failed")
+        sys.exit(1)
 
-# ------------------------------------
-# terraform plan
-# ------------------------------------
+    print("\nTerraform validation completed successfully.")
 
-code = run("terraform plan -input=false")
 
-if code != 0:
-    print("terraform plan failed")
-    sys.exit(1)
-
-print("\nTerraform validation completed successfully.")
+if __name__ == "__main__":
+    main()

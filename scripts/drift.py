@@ -1,18 +1,28 @@
 import json
+import os
 
-with open("./environments/dev/tfplan.json") as f:
+os.makedirs("reports", exist_ok=True)
+
+with open("environments/dev/tfplan.json") as f:
     plan = json.load(f)
 
-changes = plan.get("resource_changes", [])
+changes = []
 
-print("="*60)
-
-for resource in changes:
+for resource in plan.get("resource_changes", []):
 
     actions = resource["change"]["actions"]
 
     if actions != ["no-op"]:
 
-        print(resource["address"])
-        print(actions)
-        print("-"*40)
+        changes.append({
+            "resource": resource["address"],
+            "action": ", ".join(actions),
+            "changed_by": "Unknown",
+            "time": "Unknown"
+        })
+
+with open("reports/drift.json", "w") as f:
+    json.dump(changes, f, indent=4)
+
+print(f"Detected {len(changes)} drifted resources.")
+print("Saved reports/drift.json")

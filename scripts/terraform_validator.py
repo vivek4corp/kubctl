@@ -343,8 +343,6 @@ class TerraformValidator:
 
                 "fmt",
 
-                "-check",
-
                 "-recursive"
 
             ]

@@ -1,364 +1,265 @@
-name: Terraform Apply
-
+name: Terraform Drift Detection Agent
 
 on:
-
   workflow_dispatch:
 
-    inputs:
-
-      environment:
-
-        description: "Deployment environment"
-
-        required: true
-
-        default: dev
-
-        type: choice
-
-        options:
-
-          - dev
-          - test
-          - prod
-
-
-
 permissions:
-
   id-token: write
-
-  contents: read
-
-
+  contents: write
+  pull-requests: write
 
 env:
-
-
-  TF_VERSION: "1.8.5"
-
-
+  TF_WORKING_DIR: ./environments/dev
 
 jobs:
 
-
-
-# ---------------------------------------
-# Terraform Plan
-# ---------------------------------------
-
-  terraform-plan:
-
-
-    name: Terraform Plan
-
+  drift:
 
     runs-on: ubuntu-latest
 
-
-
-    environment:
-
-      name: ${{ inputs.environment }}
-
-
-
-    outputs:
-
-      plan-file: terraform.tfplan
-
-
-
     steps:
 
+    ##########################################################
+    # Checkout
+    ##########################################################
 
-
-    - name: Checkout
-
+    - name: Checkout Repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
+    ##########################################################
+    # Configure Git
+    ##########################################################
 
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+    ##########################################################
+    # Azure Login
+    ##########################################################
 
     - name: Azure Login
-
       uses: azure/login@v2
-
       with:
-
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
-
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
+    ##########################################################
+    # Terraform
+    ##########################################################
 
-
-
-    - name: Setup Terraform
-
-      uses: hashicorp/setup-terraform@v3
-
-      with:
-
-        terraform_version: ${{ env.TF_VERSION }}
-
-
-
+    - uses: hashicorp/setup-terraform@v3
 
     - name: Terraform Init
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform init
 
-      working-directory:
-
-        ./environments/${{ inputs.environment }}
-
-      run:
-
-        terraform init
-
-
-
-
-    - name: Terraform Validate
-
-      working-directory:
-
-        ./environments/${{ inputs.environment }}
-
-      run:
-
-        terraform validate
-
-
-
+    ##########################################################
+    # Terraform Plan
+    ##########################################################
 
     - name: Terraform Plan
-
-      working-directory:
-
-        ./environments/${{ inputs.environment }}
-
-      run:
-
-
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: |
         terraform plan \
-        -out=terraform.tfplan
+        -out=tfplan \
+        -detailed-exitcode \
+        -input=false
+      continue-on-error: true
+
+    ##########################################################
+    # Export Plan
+    ##########################################################
+
+    - name: Export Plan JSON
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform show -json tfplan > tfplan.json
+
+    ##########################################################
+    # Export State
+    ##########################################################
+
+    - name: Export State
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform show -json > tfstate.json
+
+    ##########################################################
+    # Python
+    ##########################################################
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r scripts/requirements.txt
+
+    ##########################################################
+    # Reports
+    ##########################################################
+
+    - name: Create Reports Folder
+      run: mkdir -p reports
+    
+    ##########################################################
+    # Analyze Terraform Drift
+    ##########################################################
+
+    - name: Analyze Drift
+      run: python scripts/drift.py
+
+    ##########################################################
+    # Azure Activity Logs
+    ##########################################################
+
+    - name: Find Infrastructure Changes
+      run: python scripts/activitylog.py
+
+    ##########################################################
+    # Generate HTML Report
+    ##########################################################
+
+    - name: Generate HTML Report
+      run: python scripts/report.py
+
+    ##########################################################
+    # AI Summary
+    ##########################################################
+
+    - name: Generate AI Summary
+      env:
+        MODELS_PAT: ${{ secrets.MODELS_PAT }}
+      run: python scripts/ai.py
+
+    ##########################################################
+    # Resolve Terraform Modules
+    ##########################################################
+
+    - name: Resolve Terraform Modules
+      run: python scripts/module_resolver.py
+
+    ##########################################################
+    # Terraform Inventory
+    ##########################################################
+
+    - name: Terraform Inventory
+      run: python scripts/terraform_inventory.py
+
+    ##########################################################
+    # Parse Terraform Resources
+    ##########################################################
+
+    - name: Parse Terraform Configuration
+      run: python scripts/terraform_parser.py
+
+    ##########################################################
+    # Generate Terraform Patch
+    ##########################################################
+
+    - name: Prepare Terraform Patch
+      run: python scripts/terraform_modifier.py
+
+    ##########################################################
+    # Update Terraform Code
+    ##########################################################
+
+    - name: Update Terraform Code
+      run: python scripts/terraform_writer.py
+
+    ##########################################################
+    # Validate Terraform
+    ##########################################################
+
+    - name: Validate Terraform
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: python ../../scripts/terraform_validator.py
 
 
+     ##########################################################
+    # Git Manager
+    ##########################################################
 
+    - name: Commit Terraform Changes
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python scripts/git_manager.py
 
-    - name: Upload Plan
+    ##########################################################
+    # Create Pull Request
+    ##########################################################
 
+    - name: Create Pull Request
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python scripts/pr_creator.py
+
+    ##########################################################
+    # Upload Reports
+    ##########################################################
+
+    - name: Upload Reports
+      if: always()
       uses: actions/upload-artifact@v4
-
-
       with:
-
-
-        name:
-
-          terraform-plan
-
-
-
-        path:
-
-
-          ./environments/${{ inputs.environment }}/terraform.tfplan
-
-
-
-
-
-# ---------------------------------------
-# Manual Approval
-# ---------------------------------------
-
-  approval:
-
-
-    name: Manual Approval
-
-
-    needs:
-
-      - terraform-plan
-
-
-
-    runs-on: ubuntu-latest
-
-
-
-    environment:
-
-
-      name:
-
-        ${{ inputs.environment }}
-
-
-
-
-    steps:
-
-
-    - name:
-
-        Waiting for approval
-
-
-      run:
-
-
-        echo "Waiting for environment approval"
-
-
-
-
-
-# ---------------------------------------
-# Terraform Apply
-# ---------------------------------------
-
-
-  terraform-apply:
-
-
-    name: Terraform Apply
-
-
-
-    needs:
-
-
-      - approval
-
-
-
-    runs-on: ubuntu-latest
-
-
-
-    environment:
-
-
-      name:
-
-        ${{ inputs.environment }}
-
-
-
-
-    steps:
-
-
-
-    - name: Checkout
-
-      uses: actions/checkout@v4
-
-
-
-
-    - name: Download Terraform Plan
-
-      uses: actions/download-artifact@v4
-
-
+        name: terraform-drift-reports
+        path: reports/
+
+    ##########################################################
+    # Upload Terraform Plan
+    ##########################################################
+
+    - name: Upload Terraform Plan
+      if: always()
+      uses: actions/upload-artifact@v4
       with:
-
-
-        name:
-
-          terraform-plan
-
-
-
-        path:
-
-
-          ./environments/${{ inputs.environment }}
-
-
-
-
-
-
-    - name: Azure Login
-
-      uses: azure/login@v2
-
-
-      with:
-
-        client-id:
-
-          ${{ secrets.AZURE_CLIENT_ID }}
-
-
-        tenant-id:
-
-          ${{ secrets.AZURE_TENANT_ID }}
-
-
-        subscription-id:
-
-          ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-
-
-
-
-
-    - name: Setup Terraform
-
-      uses:
-
-        hashicorp/setup-terraform@v3
-
-
-      with:
-
-
-        terraform_version:
-
-          ${{ env.TF_VERSION }}
-
-
-
-
-
-
-    - name: Terraform Init
-
-      working-directory:
-
-
-        ./environments/${{ inputs.environment }}
-
-
-
-      run:
-
-
-        terraform init
-
-
-
-
-
-    - name: Terraform Apply
-
-
-      working-directory:
-
-
-        ./environments/${{ inputs.environment }}
-
-
-
-      run:
-
-
-        terraform apply terraform.tfplan
+        name: terraform-plan
+        path: |
+          ${{ env.TF_WORKING_DIR }}/tfplan
+          ${{ env.TF_WORKING_DIR }}/tfplan.json
+          ${{ env.TF_WORKING_DIR }}/tfstate.json
+
+    ##########################################################
+    # GitHub Job Summary
+    ##########################################################
+
+    - name: Publish Summary
+      if: always()
+      run: |
+
+        echo "# 🚀 Terraform Drift Detection Agent" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+
+        echo "## Completed Steps" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform Plan" >> $GITHUB_STEP_SUMMARY
+        echo "- Drift Detection" >> $GITHUB_STEP_SUMMARY
+        echo "- Azure Activity Log Analysis" >> $GITHUB_STEP_SUMMARY
+        echo "- AI Drift Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- Module Discovery" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform Inventory" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform Parsing" >> $GITHUB_STEP_SUMMARY
+        echo "- Patch Generation" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform Update" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform Validation" >> $GITHUB_STEP_SUMMARY
+        echo "- Git Commit" >> $GITHUB_STEP_SUMMARY
+        echo "- Pull Request Creation" >> $GITHUB_STEP_SUMMARY
+
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "Artifacts have been uploaded successfully." >> $GITHUB_STEP_SUMMARY
+
+        if [ -f reports/pr.json ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Pull Request" >> $GITHUB_STEP_SUMMARY
+          cat reports/pr.json >> $GITHUB_STEP_SUMMARY
+        fi
+
+        if [ -f reports/summary.md ]; then
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### AI Summary" >> $GITHUB_STEP_SUMMARY
+          cat reports/summary.md >> $GITHUB_STEP_SUMMARY
+        fi

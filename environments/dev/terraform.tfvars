@@ -10,7 +10,6 @@ infra_config = {
       rg_key                  = "rg-micro-dev"
       account_tier            = "Standard"
       account_replication_type = "LRS"
-      kind                    = "StorageV2"
       tags                    = { Environment = "Dev", ManagedBy = "Terraform" }
     }
   }

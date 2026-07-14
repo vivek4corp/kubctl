@@ -24,7 +24,7 @@ jobs:
     steps:
 
     ##########################################################
-    # Checkout
+    # Checkout Repository
     ##########################################################
 
     - name: Checkout Repository
@@ -44,7 +44,7 @@ jobs:
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
 
     ##########################################################
-    # Terraform
+    # Setup Terraform
     ##########################################################
 
     - name: Setup Terraform
@@ -52,6 +52,10 @@ jobs:
 
     - name: Terraform Version
       run: terraform version
+
+    ##########################################################
+    # Terraform Init
+    ##########################################################
 
     - name: Terraform Init
       working-directory: ${{ env.TF_WORKING_DIR }}
@@ -68,8 +72,8 @@ jobs:
       run: |
         terraform plan \
           -out=tfplan \
-          -detailed-exitcode \
-          -input=false
+          -input=false \
+          -detailed-exitcode
 
     ##########################################################
     # Export Plan JSON
@@ -81,7 +85,7 @@ jobs:
       run: terraform show -json tfplan > tfplan.json
 
     ##########################################################
-    # Export State JSON
+    # Export Terraform State
     ##########################################################
 
     - name: Export Terraform State
@@ -89,7 +93,7 @@ jobs:
       run: terraform show -json > tfstate.json
 
     ##########################################################
-    # Python
+    # Setup Python
     ##########################################################
 
     - name: Setup Python
@@ -97,14 +101,258 @@ jobs:
       with:
         python-version: "3.12"
 
-    - name: Install Python Dependencies
+    ##########################################################
+    # Install Python Dependencies
+    ##########################################################
+
+    - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r scripts/requirements.txt
 
     ##########################################################
-    # Reports Folder
+    # Create Reports Directory
     ##########################################################
 
     - name: Create Reports Directory
       run: mkdir -p reports
+
+    ##########################################################
+    # Analyze Terraform Drift
+    ##########################################################
+
+    - name: Analyze Drift
+      run: python scripts/drift.py
+
+    ##########################################################
+    # Azure Activity Logs
+    ##########################################################
+
+    - name: Find Who Changed Infrastructure
+      run: python scripts/activitylog.py
+
+    ##########################################################
+    # Generate HTML Report
+    ##########################################################
+
+    - name: Generate HTML Report
+      run: python scripts/report.py
+
+    ##########################################################
+    # AI Summary
+    ##########################################################
+
+    - name: AI Summary
+      env:
+        MODELS_PAT: ${{ secrets.MODELS_PAT }}
+      run: python scripts/ai.py
+
+    ##########################################################
+    # Resolve Terraform Modules
+    ##########################################################
+
+    - name: Resolve Terraform Modules
+      run: python scripts/module_resolver.py
+
+    ##########################################################
+    # Parse Terraform Configuration
+    ##########################################################
+
+    - name: Parse Terraform Configuration
+      run: python scripts/terraform_parser.py
+      
+    ##########################################################
+    # Prepare Terraform Changes
+    ##########################################################
+
+    - name: Prepare Terraform Changes
+      run: python scripts/terraform_modifier.py
+
+    ##########################################################
+    # Update Terraform Files
+    ##########################################################
+
+    - name: Update Terraform Files
+      run: python scripts/terraform_writer.py
+
+    ##########################################################
+    # Validate Terraform Changes
+    ##########################################################
+
+    - name: Validate Terraform
+      run: python scripts/terraform_validator.py
+
+    ##########################################################
+    # Commit Changes
+    ##########################################################
+
+    - name: Commit Terraform Changes
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python scripts/git_manager.py
+
+    ##########################################################
+    # Create Pull Request
+    ##########################################################
+
+    - name: Create Pull Request
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: python scripts/pr_creator.py
+
+    ##########################################################
+    # Upload Drift Report
+    ##########################################################
+
+    - name: Upload Drift Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: drift-report
+        path: reports/drift.json
+
+    ##########################################################
+    # Upload AI Summary
+    ##########################################################
+
+    - name: Upload AI Summary
+      uses: actions/upload-artifact@v4
+      with:
+        name: ai-summary
+        path: reports/summary.md
+
+    ##########################################################
+    # Upload HTML Report
+    ##########################################################
+
+    - name: Upload HTML Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: html-report
+        path: reports/report.html
+
+    ##########################################################
+    # Upload Validation Report
+    ##########################################################
+
+    - name: Upload Validation Report
+      uses: actions/upload-artifact@v4
+      with:
+        name: validation-report
+        path: reports/validation.json
+    
+    ##########################################################
+    # Upload Terraform Plan JSON
+    ##########################################################
+
+    - name: Upload Terraform Plan
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-plan
+        path: ${{ env.TF_WORKING_DIR }}/tfplan.json
+
+    ##########################################################
+    # Upload Terraform State JSON
+    ##########################################################
+
+    - name: Upload Terraform State
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-state
+        path: ${{ env.TF_WORKING_DIR }}/tfstate.json
+
+    ##########################################################
+    # Upload Git Information
+    ##########################################################
+
+    - name: Upload Git Information
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: git-info
+        path: reports/git_info.json
+
+    ##########################################################
+    # Upload Module Mapping
+    ##########################################################
+
+    - name: Upload Module Mapping
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: module-mapping
+        path: reports/module_mapping.json
+
+    ##########################################################
+    # Upload Terraform Resources
+    ##########################################################
+
+    - name: Upload Terraform Resources
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-resources
+        path: reports/terraform_resources.json
+
+    ##########################################################
+    # Upload All Reports
+    ##########################################################
+
+    - name: Upload Complete Reports
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: terraform-drift-report
+        path: reports/
+
+    ##########################################################
+    # Publish GitHub Job Summary
+    ##########################################################
+
+    - name: Publish Job Summary
+      if: always()
+      run: |
+        echo "# Terraform Drift Detection Report" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Step | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|------|--------|" >> $GITHUB_STEP_SUMMARY
+        echo "| Terraform Plan | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Drift Detection | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Activity Log Analysis | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| AI Analysis | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Module Resolution | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Terraform Parser | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Terraform Modifier | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Terraform Writer | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Terraform Validation | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Git Commit | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "| Pull Request | ✅ |" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "## Generated Artifacts" >> $GITHUB_STEP_SUMMARY
+        echo "- Drift Report" >> $GITHUB_STEP_SUMMARY
+        echo "- AI Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- HTML Report" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform Plan JSON" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform State JSON" >> $GITHUB_STEP_SUMMARY
+        echo "- Validation Report" >> $GITHUB_STEP_SUMMARY
+        echo "- Git Information" >> $GITHUB_STEP_SUMMARY
+        echo "- Module Mapping" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform Resources" >> $GITHUB_STEP_SUMMARY
+
+    ##########################################################
+    # Workflow Completed
+    ##########################################################
+
+    - name: Workflow Completed
+      run: |
+        echo "=============================================="
+        echo "Terraform Drift Detection Completed"
+        echo "=============================================="
+        echo "Reports generated successfully."
+        echo "If drift was detected:"
+        echo "  - Terraform code updated"
+        echo "  - Validation completed"
+        echo "  - Changes committed"
+        echo "  - Pull Request created"
+        echo "=============================================="
+      

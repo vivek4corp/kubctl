@@ -5,29 +5,6 @@ variable "infra_config" {
       location = string
       tags     = optional(map(string), {})
     }))
-
-    /*
-    container_registries = map(object({
-      rg_key        = string
-      sku           = optional(string, "Standard")
-      admin_enabled = optional(bool, false)
-      tags          = optional(map(string), {})
-    }))
-    */
-
-    /*
-    kubernetes_clusters = map(object({
-      rg_key     = string
-      dns_prefix = string
-      default_node_pool = object({
-        name       = string
-        node_count = optional(number, 1)
-        vm_size    = optional(string, "Standard_DS2_v2")
-      })
-      tags = optional(map(string), {})
-    }))
-    */
-
     storage_accounts = map(object({
       rg_key                  = string
       account_tier            = optional(string, "Standard")

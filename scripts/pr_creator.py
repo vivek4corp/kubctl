@@ -3,54 +3,73 @@ import os
 import sys
 import requests
 
+# -------------------------------------------------------
+# Environment
+# -------------------------------------------------------
+
 TOKEN = os.getenv("GITHUB_TOKEN")
 
 if not TOKEN:
-    print("GITHUB_TOKEN not found.")
+    print("ERROR: GITHUB_TOKEN not found.")
     sys.exit(1)
 
 REPOSITORY = os.getenv("GITHUB_REPOSITORY")
 
 if not REPOSITORY:
-    print("GITHUB_REPOSITORY not found.")
+    print("ERROR: GITHUB_REPOSITORY not found.")
     sys.exit(1)
 
 OWNER, REPO = REPOSITORY.split("/")
 
-with open("reports/git_info.json") as f:
+# -------------------------------------------------------
+# Read Git Information
+# -------------------------------------------------------
+
+with open("reports/git_info.json", "r", encoding="utf-8") as f:
     git = json.load(f)
 
-branch = git["branch"]
+feature_branch = git["feature_branch"]
+base_branch = git["current_branch"]
+
+# -------------------------------------------------------
+# Read AI Summary
+# -------------------------------------------------------
 
 summary = ""
 
 if os.path.exists("reports/summary.md"):
-    with open("reports/summary.md") as f:
+    with open("reports/summary.md", "r", encoding="utf-8") as f:
         summary = f.read()
+
+# -------------------------------------------------------
+# Pull Request Body
+# -------------------------------------------------------
 
 title = "AI Terraform Drift Auto Remediation"
 
 body = f"""
-# Terraform Drift Auto Remediation
+## Terraform Drift Auto Remediation
 
-This Pull Request was automatically created.
+This pull request was automatically created by the Terraform Drift Detection Agent.
 
-## AI Summary
+### AI Analysis
 
 {summary}
 
 ---
 
-Please review before merging.
+### Validation
 
-Validation Completed
+- Terraform configuration updated
+- Terraform validation completed
+- Ready for manual review
 
-- terraform fmt
-- terraform validate
-- terraform plan
-
-Manual approval required.
+> After approval, merge this PR and run the Terraform Apply workflow.
 """
+
+# -------------------------------------------------------
+# GitHub API
+# -------------------------------------------------------
 
 url = f"https://api.github.com/repos/{OWNER}/{REPO}/pulls"
 
@@ -61,10 +80,9 @@ headers = {
 
 payload = {
     "title": title,
-    "head": branch,
-    "base": "main",
-    "body": body,
-    "maintainer_can_modify": True
+    "head": feature_branch,
+    "base": base_branch,
+    "body": body
 }
 
 response = requests.post(
@@ -74,9 +92,23 @@ response = requests.post(
     timeout=60
 )
 
-print(response.status_code)
-print(response.text)
+print("Status Code:", response.status_code)
 
-response.raise_for_status()
+if not response.ok:
+    print(response.text)
+    response.raise_for_status()
 
+pr = response.json()
+
+print("=" * 70)
 print("Pull Request Created Successfully")
+print("=" * 70)
+print("PR Number :", pr["number"])
+print("PR URL    :", pr["html_url"])
+
+os.makedirs("reports", exist_ok=True)
+
+with open("reports/pr.json", "w", encoding="utf-8") as f:
+    json.dump(pr, f, indent=4)
+
+print("Saved: reports/pr.json")

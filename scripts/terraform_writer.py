@@ -1,20 +1,14 @@
 import json
 import os
 import shutil
+import subprocess
 
-CHANGE_FILE = "reports/terraform_changes.json"
-
-
-def backup(file):
-
-    backup_file = file + ".bak"
-
-    if not os.path.exists(backup_file):
-
-        shutil.copy(file, backup_file)
+PATCH_FILE = "reports/terraform_patch.json"
+OUTPUT_FILE = "reports/terraform_writer.json"
 
 
-def tf_value(value):
+def terraform_value(value):
+    """Convert Python value to Terraform syntax."""
 
     if value is None:
         return "null"
@@ -37,87 +31,203 @@ def tf_value(value):
     return str(value)
 
 
-def update_attribute(lines, key, value):
+def backup(file_path):
+    backup_file = file_path + ".bak"
 
-    for index, line in enumerate(lines):
+    if not os.path.exists(backup_file):
+        shutil.copy(file_path, backup_file)
+
+
+def replace_attribute(lines, attribute, value):
+
+    for i, line in enumerate(lines):
 
         stripped = line.strip()
 
-        if stripped.startswith(key + " ="):
+        if stripped.startswith(attribute + " ="):
 
-            indent = line[:len(line) - len(line.lstrip())]
+            indent = line[: len(line) - len(line.lstrip())]
 
-            lines[index] = f"{indent}{key} = {tf_value(value)}\n"
+            lines[i] = f"{indent}{attribute} = {terraform_value(value)}\n"
 
             return True
 
     return False
 
 
-def process(change):
+def add_attribute(lines, attribute, value):
 
-    file = change["file"]
+    resource_end = None
 
-    if not os.path.exists(file):
+    brace = 0
 
-        print(f"Missing: {file}")
+    started = False
 
-        return
+    for i, line in enumerate(lines):
 
-    backup(file)
+        if "resource " in line:
 
-    with open(file, encoding="utf-8") as f:
+            started = True
+
+        if started:
+
+            brace += line.count("{")
+            brace -= line.count("}")
+
+            if brace == 0:
+
+                resource_end = i
+                break
+
+    if resource_end is None:
+        return False
+
+    indent = "  "
+
+    lines.insert(
+        resource_end,
+        f"{indent}{attribute} = {terraform_value(value)}\n",
+    )
+
+    return True
+
+
+def remove_attribute(lines, attribute):
+
+    for i, line in enumerate(lines):
+
+        if line.strip().startswith(attribute + " ="):
+
+            del lines[i]
+
+            return True
+
+    return False
+
+
+def update_file(change):
+
+    tf_file = change["file"]
+
+    if not os.path.exists(tf_file):
+
+        print(f"Missing file {tf_file}")
+
+        return {
+            "file": tf_file,
+            "status": "missing"
+        }
+
+    backup(tf_file)
+
+    with open(tf_file, encoding="utf-8") as f:
 
         lines = f.readlines()
 
-    changed = False
+    modified = False
 
-    for key, value in change["attributes"].items():
+    for op in change["operations"]:
 
-        if isinstance(value, (dict, list)):
-            continue
+        operation = op["op"]
 
-        if update_attribute(lines, key, value):
+        attribute = op["attribute"]
 
-            print(f"Updated {key}")
+        if operation == "replace":
 
-            changed = True
+            if replace_attribute(
+                lines,
+                attribute,
+                op["value"],
+            ):
+                modified = True
 
-    if changed:
+        elif operation == "add":
 
-        with open(file, "w", encoding="utf-8") as f:
+            if add_attribute(
+                lines,
+                attribute,
+                op["value"],
+            ):
+                modified = True
+
+        elif operation == "remove":
+
+            if remove_attribute(
+                lines,
+                attribute,
+            ):
+                modified = True
+
+    if modified:
+
+        with open(tf_file, "w", encoding="utf-8") as f:
 
             f.writelines(lines)
 
-        print(f"Saved {file}")
+    return {
+        "file": tf_file,
+        "modified": modified,
+    }
 
-    else:
 
-        print(f"No changes required in {file}")
+def terraform_fmt():
+
+    try:
+
+        subprocess.run(
+            [
+                "terraform",
+                "fmt",
+                "-recursive",
+            ],
+            check=True,
+        )
+
+        return True
+
+    except Exception as ex:
+
+        print(ex)
+
+        return False
 
 
 def main():
 
-    if not os.path.exists(CHANGE_FILE):
+    if not os.path.exists(PATCH_FILE):
 
-        print("terraform_changes.json not found")
+        print("terraform_patch.json not found")
 
         return
 
-    with open(CHANGE_FILE, encoding="utf-8") as f:
+    with open(PATCH_FILE, encoding="utf-8") as f:
 
-        changes = json.load(f)
+        patches = json.load(f)
 
-    print("=" * 70)
+    report = []
+
+    print("=" * 80)
     print("Terraform Writer")
-    print("=" * 70)
+    print("=" * 80)
 
-    for change in changes:
+    for patch in patches:
 
-        process(change)
+        result = update_file(patch)
+
+        report.append(result)
+
+    terraform_fmt()
+
+    os.makedirs("reports", exist_ok=True)
+
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+
+        json.dump(report, f, indent=4)
 
     print()
+    print("=" * 80)
     print("Terraform update completed.")
+    print("=" * 80)
 
 
 if __name__ == "__main__":

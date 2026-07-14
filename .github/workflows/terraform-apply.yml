@@ -3,19 +3,24 @@ name: Terraform Drift Detection Agent
 on:
   workflow_dispatch:
 
+
 permissions:
   id-token: write
   contents: write
   pull-requests: write
   issues: write
 
+
 env:
+
   TF_WORKING_DIR: ./environments/dev
+
 
 
 jobs:
 
   drift:
+
 
     runs-on: ubuntu-latest
 
@@ -29,7 +34,9 @@ jobs:
 
     - name: Checkout Repository
       uses: actions/checkout@v4
+
       with:
+
         fetch-depth: 0
 
 
@@ -39,8 +46,11 @@ jobs:
     ##########################################################
 
     - name: Configure Git
+
       run: |
+
         git config --global user.name "github-actions[bot]"
+
         git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
 
@@ -50,11 +60,17 @@ jobs:
     ##########################################################
 
     - name: Azure Login
+
       uses: azure/login@v2
+
       with:
+
         client-id: ${{ secrets.AZURE_CLIENT_ID }}
+
         tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+
         subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
 
 
 
@@ -63,7 +79,9 @@ jobs:
     ##########################################################
 
     - name: Setup Terraform
+
       uses: hashicorp/setup-terraform@v3
+
 
 
 
@@ -72,8 +90,12 @@ jobs:
     ##########################################################
 
     - name: Terraform Init
+
       working-directory: ${{ env.TF_WORKING_DIR }}
-      run: terraform init
+
+      run: |
+
+        terraform init
 
 
 
@@ -82,7 +104,11 @@ jobs:
     ##########################################################
 
     - name: Terraform Plan
+
       working-directory: ${{ env.TF_WORKING_DIR }}
+
+      continue-on-error: true
+
       run: |
 
         terraform plan \
@@ -90,7 +116,6 @@ jobs:
         -detailed-exitcode \
         -input=false
 
-      continue-on-error: true
 
 
 
@@ -99,26 +124,27 @@ jobs:
     ##########################################################
 
     - name: Export Plan JSON
+
       working-directory: ${{ env.TF_WORKING_DIR }}
+
       run: |
 
-        terraform show \
-        -json tfplan \
-        > tfplan.json
+        terraform show -json tfplan > tfplan.json
+
 
 
 
     ##########################################################
-    # Export Terraform State
+    # Export State
     ##########################################################
 
     - name: Export State JSON
+
       working-directory: ${{ env.TF_WORKING_DIR }}
+
       run: |
 
-        terraform show \
-        -json \
-        > tfstate.json
+        terraform show -json > tfstate.json
 
 
 
@@ -128,13 +154,17 @@ jobs:
     ##########################################################
 
     - name: Setup Python
+
       uses: actions/setup-python@v5
+
       with:
+
         python-version: "3.12"
 
 
 
-    - name: Install Python Dependencies
+    - name: Install Dependencies
+
       run: |
 
         python -m pip install --upgrade pip
@@ -143,34 +173,43 @@ jobs:
 
 
 
+
     ##########################################################
-    # Reports Folder
+    # Reports
     ##########################################################
 
     - name: Create Reports Folder
-      run: mkdir -p reports
+
+      run:
+
+        mkdir -p reports
+
 
 
 
     ##########################################################
-    # Drift Analysis
+    # Drift Detection
     ##########################################################
 
     - name: Analyze Terraform Drift
-      run: |
+
+      run:
 
         python scripts/drift.py
 
 
 
+
     ##########################################################
-    # Azure Activity Analysis
+    # Activity Logs
     ##########################################################
 
     - name: Analyze Azure Activity Logs
-      run: |
+
+      run:
 
         python scripts/activitylog.py
+
 
 
 
@@ -179,9 +218,11 @@ jobs:
     ##########################################################
 
     - name: Generate HTML Report
-      run: |
+
+      run:
 
         python scripts/report.py
+
 
 
 
@@ -190,11 +231,12 @@ jobs:
     ##########################################################
 
     - name: Generate AI Summary
+
       env:
 
         MODELS_PAT: ${{ secrets.MODELS_PAT }}
 
-      run: |
+      run:
 
         python scripts/ai.py
 
@@ -202,13 +244,15 @@ jobs:
 
 
     ##########################################################
-    # Terraform Module Resolver
+    # Module Resolver
     ##########################################################
 
     - name: Resolve Terraform Modules
-      run: |
+
+      run:
 
         python scripts/module_resolver.py
+
 
 
 
@@ -217,7 +261,8 @@ jobs:
     ##########################################################
 
     - name: Terraform Inventory
-      run: |
+
+      run:
 
         python scripts/terraform_inventory.py
 
@@ -225,11 +270,12 @@ jobs:
 
 
     ##########################################################
-    # Parse Terraform
+    # Terraform Parser
     ##########################################################
 
     - name: Parse Terraform Configuration
-      run: |
+
+      run:
 
         python scripts/terraform_parser.py \
         --repo . \
@@ -239,11 +285,12 @@ jobs:
 
 
     ##########################################################
-    # Generate Change Request
+    # Change Generator
     ##########################################################
 
     - name: Generate Terraform Change Request
-      run: |
+
+      run:
 
         python scripts/change_generator.py \
         --drift reports/drift.json \
@@ -253,14 +300,15 @@ jobs:
 
 
     ##########################################################
-    # Generate Terraform Patch
+    # Terraform Modifier
     ##########################################################
 
     - name: Generate Terraform Patch
-      run: |
+
+      run:
 
         python scripts/terraform_modifier.py \
-        --resources reports/terraform_resources.json \
+        --inventory reports/terraform_resources.json \
         --changes reports/change_requests.json \
         --output reports/terraform_patch.json
 
@@ -268,13 +316,15 @@ jobs:
 
 
     ##########################################################
-    # Update Terraform Code
+    # Terraform Writer
     ##########################################################
 
     - name: Update Terraform Code
-      run: |
+
+      run:
 
         python scripts/terraform_writer.py \
+        --path . \
         --patch reports/terraform_patch.json \
         --report reports/writer_report.json
 
@@ -286,7 +336,8 @@ jobs:
     ##########################################################
 
     - name: Validate Terraform
-      run: |
+
+      run:
 
         python scripts/terraform_validator.py \
         --path ${{ env.TF_WORKING_DIR }} \
@@ -296,15 +347,49 @@ jobs:
 
 
     ##########################################################
-    # Commit Terraform Changes
+    # Detect Changes
+    ##########################################################
+
+    - name: Check Terraform Changes
+
+      id: changes
+
+      run: |
+
+
+        if [ -f reports/terraform_patch.json ]; then
+
+
+          COUNT=$(jq '.changes | length' reports/terraform_patch.json)
+
+
+          echo "changes=$COUNT" >> $GITHUB_OUTPUT
+
+
+        else
+
+
+          echo "changes=0" >> $GITHUB_OUTPUT
+
+
+        fi
+
+
+
+
+    ##########################################################
+    # Git Commit
     ##########################################################
 
     - name: Commit Terraform Changes
+
+      if: steps.changes.outputs.changes != '0'
+
       env:
 
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      run: |
+      run:
 
         python scripts/git_manager.py \
         --repo . \
@@ -319,11 +404,14 @@ jobs:
     ##########################################################
 
     - name: Create Pull Request
+
+      if: steps.changes.outputs.changes != '0'
+
       env:
 
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      run: |
+      run:
 
         python scripts/pr_creator.py \
         --repository ${{ github.repository }} \
@@ -340,6 +428,7 @@ jobs:
     ##########################################################
 
     - name: Upload Reports
+
       if: always()
 
       uses: actions/upload-artifact@v4
@@ -348,13 +437,15 @@ jobs:
 
         name: terraform-drift-reports
 
-        path: reports/
+        path:
+
+          reports/
 
 
 
 
     ##########################################################
-    # Upload Terraform Files
+    # Upload Terraform Plan
     ##########################################################
 
     - name: Upload Terraform Plan
@@ -379,7 +470,7 @@ jobs:
 
 
     ##########################################################
-    # GitHub Summary
+    # Summary
     ##########################################################
 
     - name: Publish Summary
@@ -391,38 +482,49 @@ jobs:
 
         echo "# 🚀 Terraform Drift Detection Agent" >> $GITHUB_STEP_SUMMARY
 
+
         echo "" >> $GITHUB_STEP_SUMMARY
 
 
         echo "## Completed Steps" >> $GITHUB_STEP_SUMMARY
 
-        echo "- Terraform Plan" >> $GITHUB_STEP_SUMMARY
 
-        echo "- Drift Detection" >> $GITHUB_STEP_SUMMARY
+        echo "- Terraform Drift Detection" >> $GITHUB_STEP_SUMMARY
 
-        echo "- Azure Activity Analysis" >> $GITHUB_STEP_SUMMARY
-
-        echo "- AI Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- AI Analysis" >> $GITHUB_STEP_SUMMARY
 
         echo "- Terraform Inventory" >> $GITHUB_STEP_SUMMARY
 
         echo "- Terraform Parsing" >> $GITHUB_STEP_SUMMARY
 
-        echo "- Change Request Generation" >> $GITHUB_STEP_SUMMARY
+        echo "- Change Generation" >> $GITHUB_STEP_SUMMARY
 
-        echo "- Terraform Patch Generation" >> $GITHUB_STEP_SUMMARY
-
-        echo "- Terraform Code Update" >> $GITHUB_STEP_SUMMARY
+        echo "- Patch Generation" >> $GITHUB_STEP_SUMMARY
 
         echo "- Terraform Validation" >> $GITHUB_STEP_SUMMARY
 
-        echo "- Git Commit" >> $GITHUB_STEP_SUMMARY
+        echo "- Git Automation" >> $GITHUB_STEP_SUMMARY
 
-        echo "- Pull Request Creation" >> $GITHUB_STEP_SUMMARY
+        echo "- Pull Request Automation" >> $GITHUB_STEP_SUMMARY
+
+
+
+        if [ -f reports/manual_review.json ]; then
+
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          echo "## Manual Review Required" >> $GITHUB_STEP_SUMMARY
+
+          cat reports/manual_review.json >> $GITHUB_STEP_SUMMARY
+
+
+        fi
 
 
 
         if [ -f reports/summary.md ]; then
+
 
           echo "" >> $GITHUB_STEP_SUMMARY
 
@@ -430,15 +532,5 @@ jobs:
 
           cat reports/summary.md >> $GITHUB_STEP_SUMMARY
 
-        fi
-
-
-        if [ -f reports/pr_creation.json ]; then
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-
-          echo "## Pull Request Details" >> $GITHUB_STEP_SUMMARY
-
-          cat reports/pr_creation.json >> $GITHUB_STEP_SUMMARY
 
         fi

@@ -5,7 +5,6 @@ infra_config = {
       tags     = { Environment = "Dev", ManagedBy = "Terraform" }
     }
   }
-
   storage_accounts = {
     "stgmicrodev123" = {
       rg_key                  = "rg-micro-dev"

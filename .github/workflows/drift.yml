@@ -122,12 +122,15 @@ jobs:
 
       - name: Create or update drift review pull request
         if: steps.plan.outputs.has_drift == 'true'
+        id: create_pr
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore(terraform): adopt detected infrastructure drift"
           branch: terraform-drift-review
-          delete-branch: true
+          # Keep the branch so the comparison/PR URL remains valid after the
+          # workflow finishes. Delete it manually after the reviewed PR merges.
+          delete-branch: false
           title: "Terraform drift review (dev)"
           body: |
             Terraform detected infrastructure drift in the `dev` environment.
@@ -138,6 +141,13 @@ jobs:
           add-paths: |
             environments/dev/**/*.tf
             environments/dev/**/*.tfvars
+
+      - name: Publish pull request result
+        if: steps.plan.outputs.has_drift == 'true'
+        shell: bash
+        run: |
+          echo "PR operation: ${{ steps.create_pr.outputs.pull-request-operation }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "PR URL: ${{ steps.create_pr.outputs.pull-request-url }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Publish summary
         if: always()

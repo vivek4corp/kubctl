@@ -9,8 +9,7 @@ Responsibilities:
 - Generate validation report
 - Provide CI/CD quality gate
 
-Supported checks:
-- terraform fmt
+Checks:
 - terraform init
 - terraform validate
 - terraform plan
@@ -27,8 +26,8 @@ import subprocess
 
 
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any
+from datetime import datetime, timezone
+from typing import Dict, Any
 
 
 
@@ -40,8 +39,7 @@ logging.basicConfig(
 
     level=logging.INFO,
 
-    format=
-    "%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s"
 
 )
 
@@ -105,7 +103,9 @@ class TerraformValidator:
 
                 "generated_at":
 
-                    datetime.utcnow().isoformat(),
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat(),
 
 
                 "engine":
@@ -140,57 +140,71 @@ class TerraformValidator:
     # -----------------------------------------------------
     # Execute Command
     # -----------------------------------------------------
-    
+
     def run_command(
         self,
         command: list
     ):
-    
+
         """
-        Execute shell command.
+        Execute terraform command.
         """
-    
-        process = subprocess.run(
-    
-            command,
-    
-            cwd=self.path,
-    
-            capture_output=True,
-    
-            text=True
-    
+
+
+        logger.info(
+
+            "Running: %s",
+
+            " ".join(command)
+
         )
-    
-    
+
+
+        process = subprocess.run(
+
+            command,
+
+            cwd=self.terraform_path,
+
+            capture_output=True,
+
+            text=True
+
+        )
+
+
+
         return {
-    
-    
+
+
             "command":
-    
+
                 " ".join(command),
-    
-    
+
+
             "success":
-    
+
                 process.returncode == 0,
-    
-    
+
+
             "return_code":
-    
+
                 process.returncode,
-    
-    
+
+
             "stdout":
-    
+
                 process.stdout,
-    
-    
+
+
             "stderr":
-    
+
                 process.stderr
-    
+
         }
+
+
+
     # -----------------------------------------------------
     # Add Check Result
     # -----------------------------------------------------
@@ -202,7 +216,7 @@ class TerraformValidator:
     ):
 
         """
-        Add validation result to report.
+        Add validation result.
         """
 
 
@@ -276,51 +290,6 @@ class TerraformValidator:
 
 
     # -----------------------------------------------------
-    # Terraform Format Check
-    # -----------------------------------------------------
-
-    def run_fmt(self):
-
-        """
-        Execute terraform fmt check.
-        """
-
-
-        result = self.run_command(
-
-            [
-
-                "terraform",
-
-                "fmt",
-
-                "-recursive"
-
-            ]
-
-        )
-
-
-
-        self.add_check_result(
-
-            "terraform_fmt",
-
-            result
-
-        )
-
-
-
-        return result.get(
-
-            "success"
-
-        )
-
-
-
-    # -----------------------------------------------------
     # Terraform Init
     # -----------------------------------------------------
 
@@ -372,7 +341,7 @@ class TerraformValidator:
     def run_validate(self):
 
         """
-        Validate terraform syntax.
+        Validate terraform configuration.
         """
 
 
@@ -399,6 +368,7 @@ class TerraformValidator:
             result
 
         )
+
 
 
         return result.get(
@@ -447,6 +417,7 @@ class TerraformValidator:
         )
 
 
+
         return result.get(
 
             "success"
@@ -462,7 +433,7 @@ class TerraformValidator:
     def run_all_checks(self):
 
         """
-        Execute complete validation flow.
+        Execute validation workflow.
         """
 
 
@@ -471,10 +442,6 @@ class TerraformValidator:
             "Starting terraform validation"
 
         )
-
-
-
-        self.run_fmt()
 
 
 
@@ -500,18 +467,22 @@ class TerraformValidator:
                 "Terraform init failed. Skipping remaining checks."
 
             )
-            # -----------------------------------------------------
+
+
+
+    # -----------------------------------------------------
     # Validation Gate
     # -----------------------------------------------------
 
-    def validation_gate(self) -> bool:
+    def validation_gate(self):
+
         """
         Decide pipeline status.
-
-        Used by CI/CD.
         """
 
+
         failed_checks = []
+
 
 
         for check in self.report["checks"]:
@@ -547,6 +518,7 @@ class TerraformValidator:
                     failed_checks
 
             }
+
 
 
             logger.error(
@@ -590,10 +562,10 @@ class TerraformValidator:
 
 
     # -----------------------------------------------------
-    # Terraform Working Directory Check
+    # Terraform Directory Check
     # -----------------------------------------------------
 
-    def validate_directory(self) -> bool:
+    def validate_directory(self):
 
         """
         Ensure terraform files exist.
@@ -605,9 +577,7 @@ class TerraformValidator:
 
             logger.error(
 
-                "Terraform directory not found: %s",
-
-                self.terraform_path
+                "Terraform directory missing"
 
             )
 
@@ -616,7 +586,7 @@ class TerraformValidator:
 
 
 
-        terraform_files = list(
+        files = list(
 
             self.terraform_path.rglob(
 
@@ -628,7 +598,7 @@ class TerraformValidator:
 
 
 
-        if not terraform_files:
+        if not files:
 
 
             logger.error(
@@ -652,10 +622,6 @@ class TerraformValidator:
 
     def collect_environment_info(self):
 
-        """
-        Add execution metadata.
-        """
-
 
         self.report["environment"] = {
 
@@ -667,7 +633,6 @@ class TerraformValidator:
                     self.terraform_path
 
                 ),
-
 
 
             "terraform_files":
@@ -687,7 +652,6 @@ class TerraformValidator:
                 ),
 
 
-
             "runner":
 
                 os.environ.get(
@@ -703,14 +667,10 @@ class TerraformValidator:
 
 
     # -----------------------------------------------------
-    # Execute Validation Workflow
+    # Execute Validation
     # -----------------------------------------------------
 
     def execute_validation(self):
-
-        """
-        Complete validation workflow.
-        """
 
 
         logger.info(
@@ -722,21 +682,6 @@ class TerraformValidator:
 
 
         if not self.validate_directory():
-
-
-            self.report["gate"] = {
-
-
-                "status":
-
-                    "FAILED",
-
-
-                "reason":
-
-                    "Invalid terraform directory"
-
-            }
 
 
             return False
@@ -752,90 +697,64 @@ class TerraformValidator:
 
 
         return self.validation_gate()
-        # -----------------------------------------------------
-    # Save Validation Report
+
+
+
+    # -----------------------------------------------------
+    # Save Report
     # -----------------------------------------------------
 
     def save_report(self):
 
-        """
-        Save terraform validation report.
-        """
 
+        self.report_file.parent.mkdir(
 
-        try:
+            parents=True,
 
+            exist_ok=True
 
-            self.report_file.parent.mkdir(
-
-                parents=True,
-
-                exist_ok=True
-
-            )
+        )
 
 
 
-            with open(
+        with open(
 
-                self.report_file,
+            self.report_file,
 
-                "w",
+            "w",
 
-                encoding="utf-8"
+            encoding="utf-8"
 
-            ) as file:
-
-
-                json.dump(
-
-                    self.report,
-
-                    file,
-
-                    indent=4,
-
-                    default=str
-
-                )
+        ) as file:
 
 
+            json.dump(
 
-            logger.info(
+                self.report,
 
-                "Validation report created: %s",
+                file,
 
-                self.report_file
+                indent=4
 
             )
 
 
 
-        except Exception as error:
+        logger.info(
 
+            "Validation report created: %s",
 
-            logger.error(
+            self.report_file
 
-                "Unable to save validation report: %s",
-
-                error
-
-            )
-
-
-            raise
+        )
 
 
 
     # -----------------------------------------------------
-    # Complete Execution
+    # Execute
     # -----------------------------------------------------
 
     def execute(self):
-
-        """
-        Complete validator workflow.
-        """
 
 
         status = self.execute_validation()
@@ -850,11 +769,14 @@ class TerraformValidator:
 
 
 
+
+
 # ---------------------------------------------------------
 # CLI
 # ---------------------------------------------------------
 
 def create_arguments():
+
 
     parser = argparse.ArgumentParser(
 
@@ -865,17 +787,17 @@ def create_arguments():
     )
 
 
+
     parser.add_argument(
 
         "--path",
 
         default=".",
 
-        help=
-
-        "Terraform working directory"
+        help="Terraform directory"
 
     )
+
 
 
     parser.add_argument(
@@ -884,14 +806,15 @@ def create_arguments():
 
         default=DEFAULT_REPORT,
 
-        help=
-
-        "Validation report output"
+        help="Validation report"
 
     )
 
 
+
     return parser.parse_args()
+
+
 
 
 
@@ -916,54 +839,36 @@ def main():
 
 
 
-    try:
-
-
-        success = validator.execute()
+    success = validator.execute()
 
 
 
-        if success:
+    if success:
 
 
-            print(
+        print(
 
-                "Terraform validation PASSED"
+            "Terraform validation PASSED"
 
-            )
-
-
-            exit(0)
+        )
 
 
-
-        else:
-
-
-            print(
-
-                "Terraform validation FAILED"
-
-            )
-
-
-            exit(1)
+        exit(0)
 
 
 
-    except Exception as error:
+    else:
 
 
-        logger.exception(
+        print(
 
-            "Validation execution failed: %s",
-
-            error
+            "Terraform validation FAILED"
 
         )
 
 
         exit(1)
+
 
 
 

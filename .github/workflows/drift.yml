@@ -6,8 +6,8 @@ on:
     # Daily at 02:00 UTC. Change this to match the required review cadence.
     - cron: "0 2 * * *"
 
-# This workflow never runs `terraform apply`. Its only write operation is
-# creating/updating a pull request that contains the drift review document.
+# This workflow never runs `terraform apply`. Its only external write is a PR
+# containing the AI-proposed Terraform source changes.
 permissions:
   id-token: write
   contents: write
@@ -85,7 +85,6 @@ jobs:
             --patch reports/ai_remediation.patch
           terraform fmt -recursive ${{ env.TF_WORKING_DIR }}
           terraform -chdir=${{ env.TF_WORKING_DIR }} validate
-          python scripts/drift_review.py --drift reports/drift.json --output drift-reviews/dev.md
         env:
           MODELS_PAT: ${{ secrets.MODELS_PAT }}
 
@@ -104,26 +103,19 @@ jobs:
         uses: peter-evans/create-pull-request@v7
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "docs: record Terraform drift for review"
+          commit-message: "chore(terraform): adopt detected infrastructure drift"
           branch: terraform-drift-review
           delete-branch: true
           title: "Terraform drift review (dev)"
           body: |
             Terraform detected infrastructure drift in the `dev` environment.
 
-            This PR intentionally does **not** run `terraform apply` or modify Terraform configuration automatically. Review `drift-reviews/dev.md`, make any required `.tf` changes in this PR, and merge only after the normal Terraform plan checks pass. The existing main-branch apply workflow remains the only place that applies approved configuration.
-
-      - name: Upload diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: terraform-drift-diagnostics
-          path: |
-            reports/
-            ${{ env.TF_WORKING_DIR }}/tfplan
-            ${{ env.TF_WORKING_DIR }}/tfplan.json
-            ${{ env.TF_WORKING_DIR }}/tfstate.json
-          if-no-files-found: warn
+            This PR contains only the AI-proposed Terraform source changes. Drift reports, plan/state JSON, AI responses, and diagnostics remain on the runner and are not committed or uploaded. No `terraform apply` is run.
+          # Restrict the commit to Terraform source files. Reports and plan/state
+          # output can contain sensitive values and must never reach the PR.
+          add-paths: |
+            environments/dev/**/*.tf
+            environments/dev/**/*.tfvars
 
       - name: Publish summary
         if: always()

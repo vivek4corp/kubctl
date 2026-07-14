@@ -120,34 +120,66 @@ jobs:
         env:
           MODELS_PAT: ${{ secrets.MODELS_PAT }}
 
-      - name: Create or update drift review pull request
+      - name: Commit and push AI Terraform changes
         if: steps.plan.outputs.has_drift == 'true'
-        id: create_pr
-        uses: peter-evans/create-pull-request@v7
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          commit-message: "chore(terraform): adopt detected infrastructure drift"
-          branch: terraform-ai-remediation
-          # Keep the branch so the comparison/PR URL remains valid after the
-          # workflow finishes. Delete it manually after the reviewed PR merges.
-          delete-branch: false
-          title: "Terraform drift review (dev)"
-          body: |
-            Terraform detected infrastructure drift in the `dev` environment.
-
-            This PR contains only the AI-proposed Terraform source changes. The workflow ran `terraform validate` and a post-remediation `terraform plan` before opening this PR (result: `${{ steps.remediation_plan.outputs.result }}`). Drift reports, plan/state JSON, AI responses, and diagnostics remain on the runner and are not committed or uploaded. No `terraform apply` is run.
-          # Restrict the commit to Terraform source files. Reports and plan/state
-          # output can contain sensitive values and must never reach the PR.
-          add-paths: |
-            environments/dev/**/*.tf
-            environments/dev/**/*.tfvars
-
-      - name: Publish pull request result
-        if: steps.plan.outputs.has_drift == 'true'
+        id: commit_changes
         shell: bash
         run: |
-          echo "PR operation: ${{ steps.create_pr.outputs.pull-request-operation }}" >> "$GITHUB_STEP_SUMMARY"
-          echo "PR URL: ${{ steps.create_pr.outputs.pull-request-url }}" >> "$GITHUB_STEP_SUMMARY"
+          mapfile -t changed_files < <(git diff --name-only -- "${{ env.TF_WORKING_DIR }}")
+          safe_files=()
+          for file in "${changed_files[@]}"; do
+            case "$file" in
+              ${{ env.TF_WORKING_DIR }}/*.tf|${{ env.TF_WORKING_DIR }}/*.tfvars)
+                safe_files+=("$file")
+                ;;
+              *)
+                echo "Refusing to commit non-Terraform output: $file" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          if [ "${#safe_files[@]}" -eq 0 ]; then
+            echo "created=false" >> "$GITHUB_OUTPUT"
+            echo "No AI Terraform source changes were produced."
+            exit 0
+          fi
+
+          branch="terraform-ai-remediation"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add -f -- "${safe_files[@]}"
+          git commit -m "chore(terraform): adopt detected infrastructure drift"
+          git push --force-with-lease --set-upstream origin "$branch"
+          echo "created=true" >> "$GITHUB_OUTPUT"
+
+      - name: Create or update drift review pull request
+        if: steps.commit_changes.outputs.created == 'true'
+        uses: actions/github-script@v7
+        env:
+          BRANCH: terraform-ai-remediation
+          PLAN_RESULT: ${{ steps.remediation_plan.outputs.result }}
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const title = 'Terraform drift review (dev)';
+            const body = `Terraform detected infrastructure drift in the \`dev\` environment.
+
+            This PR contains only AI-proposed Terraform source changes. The workflow ran \`terraform validate\` and a post-remediation \`terraform plan\` before opening this PR (result: \`${process.env.PLAN_RESULT}\`). Drift reports, plan/state JSON, AI responses, and diagnostics remain on the runner and are not committed or uploaded. No \`terraform apply\` is run.`;
+            const head = `${context.repo.owner}:${process.env.BRANCH}`;
+            const { data: pulls } = await github.rest.pulls.list({
+              owner: context.repo.owner, repo: context.repo.repo, state: 'open', head, base: 'main'
+            });
+            if (pulls.length) {
+              await github.rest.pulls.update({ owner: context.repo.owner, repo: context.repo.repo, pull_number: pulls[0].number, title, body });
+              await core.summary.addRaw(`PR updated: ${pulls[0].html_url}`).write();
+            } else {
+              const { data: pull } = await github.rest.pulls.create({
+                owner: context.repo.owner, repo: context.repo.repo, title, head: process.env.BRANCH, base: 'main', body
+              });
+              await core.summary.addRaw(`PR created: ${pull.html_url}`).write();
+            }
 
       - name: Publish summary
         if: always()

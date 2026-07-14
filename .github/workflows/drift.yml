@@ -4,11 +4,12 @@ on:
   workflow_dispatch:
 
   schedule:
-    - cron: "0 2 * * *"     # Daily at 2 AM UTC
+    - cron: "0 2 * * *"
 
 permissions:
   id-token: write
-  contents: read
+  contents: write
+  pull-requests: write
   models: read
 
 env:
@@ -22,11 +23,17 @@ jobs:
 
     steps:
 
+    ##########################################################
+    # Checkout
+    ##########################################################
+
     - name: Checkout Repository
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
     ##########################################################
-    # Azure Login (OIDC)
+    # Azure Login
     ##########################################################
 
     - name: Azure Login
@@ -51,21 +58,21 @@ jobs:
       run: terraform init
 
     ##########################################################
-    # Detect Drift
+    # Terraform Plan
     ##########################################################
 
     - name: Terraform Plan
       id: plan
+      continue-on-error: true
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
         terraform plan \
           -out=tfplan \
           -detailed-exitcode \
           -input=false
-      continue-on-error: true
 
     ##########################################################
-    # Export JSON
+    # Export Plan JSON
     ##########################################################
 
     - name: Export Plan JSON
@@ -73,13 +80,14 @@ jobs:
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform show -json tfplan > tfplan.json
 
-##########################################################
-# Export State
-##########################################################
+    ##########################################################
+    # Export State JSON
+    ##########################################################
 
     - name: Export Terraform State
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform show -json > tfstate.json
+
     ##########################################################
     # Python
     ##########################################################
@@ -89,97 +97,14 @@ jobs:
       with:
         python-version: "3.12"
 
-    - name: Install Dependencies
+    - name: Install Python Dependencies
       run: |
         python -m pip install --upgrade pip
         pip install -r scripts/requirements.txt
-  ##########################################################
-  # Create Reports Directory
-  ##########################################################
-  
+
+    ##########################################################
+    # Reports Folder
+    ##########################################################
+
     - name: Create Reports Directory
       run: mkdir -p reports
-
-    ##########################################################
-    # Parse Terraform Drift
-    ##########################################################
-
-    - name: Analyze Drift
-      run: python scripts/drift.py
-
-      ##########################################################
-      # Prepare Terraform Changes
-      ##########################################################
-
-    - name: Prepare Terraform Changes
-      run: python scripts/terraform_modifier.py
-
-    ##########################################################
-    # Azure Activity Logs
-    ##########################################################
-
-    - name: Find Who Changed Infrastructure
-      run: python scripts/activitylog.py
-
-    ##########################################################
-    # Generate HTML Report
-    ##########################################################
-
-    - name: Generate Report
-      run: python scripts/report.py
-
-    ##########################################################
-    # AI Summary (GitHub Models)
-    ##########################################################
-
-    - name: AI Summary
-      env:
-        MODELS_PAT: ${{ secrets.MODELS_PAT }}
-      run: python scripts/ai.py
-    ##########################################################
-    # Resolve Terraform Modules
-    ##########################################################
-
-    - name: Resolve Terraform Modules
-      run: python scripts/module_resolver.py
-
-      ##########################################################
-      # Parse Terraform Configuration
-      ##########################################################
-
-    - name: Parse Terraform Configuration
-      run: python scripts/terraform_parser.py
-    ##########################################################
-    # Upload Reports
-    ##########################################################
-
-    - name: Upload Reports
-      uses: actions/upload-artifact@v4
-      with:
-        name: terraform-drift-report
-        path: reports/
-
-    ##########################################################
-    # Upload Terraform Plan
-    ##########################################################
-
-    - name: Upload Terraform Plan
-      uses: actions/upload-artifact@v4
-      with:
-        name: tfplan-json
-        path: ${{ env.TF_WORKING_DIR }}/tfplan.json
-
-    ##########################################################
-    # Job Summary
-    ##########################################################
-
-    - name: Publish Summary
-      run: |
-        echo "## Terraform Drift Detection" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "✅ Terraform Plan Completed" >> $GITHUB_STEP_SUMMARY
-        echo "✅ Drift Analysis Completed" >> $GITHUB_STEP_SUMMARY
-        echo "✅ Azure Activity Logs Queried" >> $GITHUB_STEP_SUMMARY
-        echo "✅ AI Summary Generated" >> $GITHUB_STEP_SUMMARY
-        echo "" >> $GITHUB_STEP_SUMMARY
-        echo "See uploaded artifacts for the detailed report."

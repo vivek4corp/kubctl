@@ -1,160 +1,201 @@
 import json
 import os
+import subprocess
 import sys
 from datetime import datetime
 
-from git import Repo, GitCommandError
-
-REPORT = "reports/git_info.json"
+OUTPUT_FILE = "reports/git_info.json"
 
 
-def main():
+def run(cmd):
 
-    try:
-        repo = Repo(".")
-    except Exception as ex:
-        print(ex)
-        sys.exit(1)
-
-    if repo.bare:
-        print("Invalid git repository")
-        sys.exit(1)
-
-    ####################################################################
-    # Current Branch
-    ####################################################################
-
-    current_branch = repo.active_branch.name
-
-    ####################################################################
-    # Create Feature Branch
-    ####################################################################
-
-    branch_name = (
-        "terraform-drift-"
-        + datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    result = subprocess.run(
+        cmd,
+        capture_output=True,
+        text=True
     )
 
-    print("=" * 80)
-    print("Git Manager")
-    print("=" * 80)
+    return result
 
-    print(f"Current Branch : {current_branch}")
-    print(f"New Branch     : {branch_name}")
 
-    try:
+def git(*args):
 
-        repo.git.checkout("-b", branch_name)
+    return run(["git", *args])
 
-    except GitCommandError as ex:
 
-        print(ex)
+print("=" * 80)
+print("Git Manager")
+print("=" * 80)
 
-        sys.exit(1)
+##############################################################
+# Repository Information
+##############################################################
 
-    ####################################################################
-    # Git Config
-    ####################################################################
+repo = os.getenv("GITHUB_REPOSITORY")
 
-    with repo.config_writer() as cfg:
+if not repo:
 
-        cfg.set_value("user", "name", "Terraform Drift Agent")
-        cfg.set_value(
-            "user",
-            "email",
-            "terraform-agent@github.local"
-        )
+    print("GITHUB_REPOSITORY not found")
 
-    ####################################################################
-    # Stage Only Required Files
-    ####################################################################
+    sys.exit(1)
 
-    staged = []
+##############################################################
+# Current Branch
+##############################################################
 
-    allowed_extensions = (
-        ".tf",
-        ".tfvars",
-        ".json",
-        ".md"
-    )
+branch = (
+    git("rev-parse", "--abbrev-ref", "HEAD")
+    .stdout
+    .strip()
+)
 
-    for item in repo.index.diff(None):
+print(f"Current Branch : {branch}")
 
-        path = item.a_path
+##############################################################
+# Feature Branch
+##############################################################
 
-        if path.endswith(allowed_extensions):
+timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
 
-            repo.git.add(path)
+feature_branch = f"drift-remediation/{timestamp}"
 
-            staged.append(path)
+print(f"Feature Branch : {feature_branch}")
 
-    ####################################################################
-    # Untracked Files
-    ####################################################################
+##############################################################
+# Git Status
+##############################################################
 
-    for path in repo.untracked_files:
+status = git("status", "--porcelain")
 
-        if path.endswith(allowed_extensions):
+changed_files = []
 
-            repo.git.add(path)
+for line in status.stdout.splitlines():
 
-            staged.append(path)
+    if line.strip():
 
-    ####################################################################
-    # Nothing Changed
-    ####################################################################
+        changed_files.append(line[3:])
 
-    if len(staged) == 0:
+if len(changed_files) == 0:
 
-        print("No Terraform changes detected.")
+    print("No file changes detected.")
 
-        return
-
-    ####################################################################
-    # Commit
-    ####################################################################
-
-    commit = repo.index.commit(
-        "AI Drift Auto Remediation"
-    )
-
-    print(f"Commit : {commit.hexsha}")
-
-    ####################################################################
-    # Push
-    ####################################################################
-
-    origin = repo.remote("origin")
-
-    origin.push(
-        refspec=f"{branch_name}:{branch_name}"
-    )
-
-    print("Branch pushed successfully.")
-
-    ####################################################################
-    # Report
-    ####################################################################
+    report = {
+        "current_branch": branch,
+        "feature_branch": None,
+        "repository": repo,
+        "changed_files": [],
+        "commit": False,
+        "push": False
+    }
 
     os.makedirs("reports", exist_ok=True)
 
-    data = {
+    with open(OUTPUT_FILE, "w") as f:
 
-        "current_branch": current_branch,
-        "feature_branch": branch_name,
-        "commit": commit.hexsha,
-        "files": staged
+        json.dump(report, f, indent=4)
 
-    }
+    sys.exit(0)
 
-    with open(REPORT, "w") as f:
+##############################################################
+# Create Branch
+##############################################################
 
-        json.dump(data, f, indent=4)
+print()
 
-    print()
-    print(f"Report written : {REPORT}")
+print("Creating feature branch...")
 
+result = git(
+    "checkout",
+    "-b",
+    feature_branch
+)
 
-if __name__ == "__main__":
+if result.returncode != 0:
 
-    main()
+    print(result.stderr)
+
+    sys.exit(1)
+
+##############################################################
+# Stage Files
+##############################################################
+
+git(
+    "add",
+    "."
+)
+
+##############################################################
+# Commit
+##############################################################
+
+commit_message = "AI Terraform Drift Auto Remediation"
+
+result = git(
+    "commit",
+    "-m",
+    commit_message
+)
+
+if result.returncode != 0:
+
+    print(result.stderr)
+
+##############################################################
+# Push
+##############################################################
+
+result = git(
+    "push",
+    "--set-upstream",
+    "origin",
+    feature_branch
+)
+
+push_success = result.returncode == 0
+
+if not push_success:
+
+    print(result.stderr)
+
+##############################################################
+# Report
+##############################################################
+
+report = {
+
+    "repository": repo,
+
+    "current_branch": branch,
+
+    "feature_branch": feature_branch,
+
+    "changed_files": changed_files,
+
+    "commit": True,
+
+    "push": push_success,
+
+    "commit_message": commit_message
+
+}
+
+os.makedirs("reports", exist_ok=True)
+
+with open(
+    OUTPUT_FILE,
+    "w",
+    encoding="utf-8"
+) as f:
+
+    json.dump(
+        report,
+        f,
+        indent=4
+    )
+
+print()
+
+print("=" * 80)
+print("Git completed.")
+print("=" * 80)

@@ -1,202 +1,1048 @@
-import json
+"""
+git_manager.py
+
+Enterprise Git Automation Engine
+
+Responsibilities:
+- Manage git workflow
+- Create branches
+- Commit changes
+- Push changes
+- Generate git execution report
+
+No repository-specific assumptions.
+"""
+
+
 import os
+import json
+import argparse
+import logging
 import subprocess
-import sys
-from datetime import datetime, UTC
-
-WRITER_REPORT = "reports/terraform_writer.json"
-OUTPUT_FILE = "reports/git_info.json"
 
 
-def run(cmd):
+from pathlib import Path
+from datetime import datetime
+from typing import Dict, List, Any
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True
+
+
+# ---------------------------------------------------------
+# Logging
+# ---------------------------------------------------------
+
+logging.basicConfig(
+
+    level=logging.INFO,
+
+    format=
+    "%(asctime)s | %(levelname)s | %(message)s"
+
+)
+
+
+logger = logging.getLogger(
+
+    "git-manager"
+
+)
+
+
+
+# ---------------------------------------------------------
+# Defaults
+# ---------------------------------------------------------
+
+DEFAULT_REPORT = (
+
+    "reports/git_operation.json"
+
+)
+
+
+
+DEFAULT_BRANCH_PREFIX = (
+
+    "terraform-update"
+
+)
+
+
+
+# ---------------------------------------------------------
+# Git Manager Engine
+# ---------------------------------------------------------
+
+class GitManager:
+
+
+    def __init__(
+        self,
+        repository_path: str = ".",
+        report_file: str = DEFAULT_REPORT
+    ):
+
+
+        self.repository_path = Path(
+
+            repository_path
+
+        ).resolve()
+
+
+
+        self.report_file = Path(
+
+            report_file
+
+        )
+
+
+
+        self.report = {
+
+
+            "metadata":
+
+            {
+
+                "generated_at":
+
+                    datetime.utcnow().isoformat(),
+
+
+                "engine":
+
+                    "git_manager",
+
+
+                "version":
+
+                    "1.0.0"
+
+            },
+
+
+            "operations": [],
+
+
+            "summary":
+
+            {
+
+                "success": 0,
+
+                "failed": 0
+
+            }
+
+        }
+
+
+
+    # -----------------------------------------------------
+    # Execute Git Command
+    # -----------------------------------------------------
+
+    def run_git(
+        self,
+        command: List[str]
+    ) -> Dict[str, Any]:
+
+        """
+        Execute git command safely.
+        """
+
+
+        logger.info(
+
+            "Executing: %s",
+
+            " ".join(command)
+
+        )
+
+
+
+        try:
+
+
+            result = subprocess.run(
+
+                command,
+
+                cwd=self.repository_path,
+
+                capture_output=True,
+
+                text=True
+
+            )
+
+
+
+            return {
+
+
+                "command":
+
+                    " ".join(command),
+
+
+                "return_code":
+
+                    result.returncode,
+
+
+                "stdout":
+
+                    result.stdout,
+
+
+                "stderr":
+
+                    result.stderr,
+
+
+                "success":
+
+                    result.returncode == 0
+
+            }
+
+
+
+        except Exception as error:
+
+
+            return {
+
+
+                "command":
+
+                    " ".join(command),
+
+
+                "return_code":
+
+                    -1,
+
+
+                "stdout":
+
+                    "",
+
+
+                "stderr":
+
+                    str(error),
+
+
+                "success":
+
+                    False
+
+            }
+            # -----------------------------------------------------
+    # Record Operation Result
+    # -----------------------------------------------------
+
+    def record_operation(
+        self,
+        name: str,
+        result: Dict[str, Any]
+    ):
+
+        """
+        Add git operation result to report.
+        """
+
+
+        operation = {
+
+
+            "name":
+
+                name,
+
+
+            "command":
+
+                result.get(
+
+                    "command"
+
+                ),
+
+
+            "success":
+
+                result.get(
+
+                    "success"
+
+                ),
+
+
+            "return_code":
+
+                result.get(
+
+                    "return_code"
+
+                ),
+
+
+            "stdout":
+
+                result.get(
+
+                    "stdout"
+
+                ),
+
+
+            "stderr":
+
+                result.get(
+
+                    "stderr"
+
+                )
+
+        }
+
+
+
+        self.report["operations"].append(
+
+            operation
+
+        )
+
+
+
+        if result.get(
+
+            "success"
+
+        ):
+
+            self.report["summary"]["success"] += 1
+
+
+
+        else:
+
+            self.report["summary"]["failed"] += 1
+
+
+
+    # -----------------------------------------------------
+    # Check Repository
+    # -----------------------------------------------------
+
+    def validate_repository(self) -> bool:
+
+        """
+        Verify git repository.
+        """
+
+
+        result = self.run_git(
+
+            [
+
+                "git",
+
+                "rev-parse",
+
+                "--is-inside-work-tree"
+
+            ]
+
+        )
+
+
+
+        self.record_operation(
+
+            "repository_check",
+
+            result
+
+        )
+
+
+
+        return result.get(
+
+            "success"
+
+        )
+
+
+
+    # -----------------------------------------------------
+    # Get Current Branch
+    # -----------------------------------------------------
+
+    def current_branch(self) -> str:
+
+        """
+        Get current git branch.
+        """
+
+
+        result = self.run_git(
+
+            [
+
+                "git",
+
+                "branch",
+
+                "--show-current"
+
+            ]
+
+        )
+
+
+        self.record_operation(
+
+            "current_branch",
+
+            result
+
+        )
+
+
+
+        return result.get(
+
+            "stdout",
+
+            ""
+
+        ).strip()
+
+
+
+    # -----------------------------------------------------
+    # Create Branch
+    # -----------------------------------------------------
+
+    def create_branch(
+        self,
+        branch_name: str
+    ) -> bool:
+
+        """
+        Create and checkout new branch.
+        """
+
+
+        result = self.run_git(
+
+            [
+
+                "git",
+
+                "checkout",
+
+                "-b",
+
+                branch_name
+
+            ]
+
+        )
+
+
+
+        self.record_operation(
+
+            "create_branch",
+
+            result
+
+        )
+
+
+
+        return result.get(
+
+            "success"
+
+        )
+
+
+
+    # -----------------------------------------------------
+    # Git Status
+    # -----------------------------------------------------
+
+    def git_status(self):
+
+        """
+        Get repository changes.
+        """
+
+
+        result = self.run_git(
+
+            [
+
+                "git",
+
+                "status",
+
+                "--short"
+
+            ]
+
+        )
+
+
+
+        self.record_operation(
+
+            "git_status",
+
+            result
+
+        )
+
+
+
+        return result.get(
+
+            "stdout",
+
+            ""
+
+        )
+
+
+
+    # -----------------------------------------------------
+    # Add Files
+    # -----------------------------------------------------
+
+    def add_changes(self) -> bool:
+
+        """
+        Stage all changes.
+        """
+
+
+        result = self.run_git(
+
+            [
+
+                "git",
+
+                "add",
+
+                "."
+
+            ]
+
+        )
+
+
+
+        self.record_operation(
+
+            "git_add",
+
+            result
+
+        )
+
+
+
+        return result.get(
+
+            "success"
+
+        )
+
+
+
+    # -----------------------------------------------------
+    # Commit Changes
+    # -----------------------------------------------------
+
+    def commit_changes(
+        self,
+        message: str
+    ) -> bool:
+
+        """
+        Commit staged changes.
+        """
+
+
+        result = self.run_git(
+
+            [
+
+                "git",
+
+                "commit",
+
+                "-m",
+
+                message
+
+            ]
+
+        )
+
+
+
+        self.record_operation(
+
+            "git_commit",
+
+            result
+
+        )
+
+
+
+        return result.get(
+
+            "success"
+
+        )
+        # -----------------------------------------------------
+    # Check Remote Repository
+    # -----------------------------------------------------
+
+    def validate_remote(self) -> bool:
+
+        """
+        Verify git remote configuration.
+        """
+
+
+        result = self.run_git(
+
+            [
+
+                "git",
+
+                "remote",
+
+                "-v"
+
+            ]
+
+        )
+
+
+        self.record_operation(
+
+            "remote_check",
+
+            result
+
+        )
+
+
+
+        return result.get(
+
+            "success"
+
+        )
+
+
+
+    # -----------------------------------------------------
+    # Push Branch
+    # -----------------------------------------------------
+
+    def push_branch(
+        self,
+        branch_name: str
+    ) -> bool:
+
+        """
+        Push branch to remote repository.
+        """
+
+
+        result = self.run_git(
+
+            [
+
+                "git",
+
+                "push",
+
+                "-u",
+
+                "origin",
+
+                branch_name
+
+            ]
+
+        )
+
+
+
+        self.record_operation(
+
+            "git_push",
+
+            result
+
+        )
+
+
+
+        return result.get(
+
+            "success"
+
+        )
+
+
+
+    # -----------------------------------------------------
+    # Generate Branch Name
+    # -----------------------------------------------------
+
+    def generate_branch_name(
+        self,
+        prefix: str = DEFAULT_BRANCH_PREFIX
+    ) -> str:
+
+        """
+        Generate unique branch name.
+        """
+
+
+        timestamp = datetime.utcnow().strftime(
+
+            "%Y%m%d%H%M%S"
+
+        )
+
+
+
+        return (
+
+            f"{prefix}-{timestamp}"
+
+        )
+
+
+
+    # -----------------------------------------------------
+    # Complete Git Workflow
+    # -----------------------------------------------------
+
+    def execute_workflow(
+        self,
+        commit_message: str
+    ) -> Dict[str, Any]:
+
+        """
+        Execute complete git automation.
+        """
+
+
+        logger.info(
+
+            "Starting git workflow"
+
+        )
+
+
+
+        if not self.validate_repository():
+
+
+            return self.report
+
+
+
+        self.validate_remote()
+
+
+
+        branch = self.generate_branch_name()
+
+
+
+        self.report["branch"] = branch
+
+
+
+        if not self.create_branch(
+
+            branch
+
+        ):
+
+            return self.report
+
+
+
+        status = self.git_status()
+
+
+
+        self.report["changed_files"] = status
+
+
+
+        if not status.strip():
+
+            logger.warning(
+
+                "No changes detected"
+
+            )
+
+            return self.report
+
+
+
+        if not self.add_changes():
+
+            return self.report
+
+
+
+        if not self.commit_changes(
+
+            commit_message
+
+        ):
+
+            return self.report
+
+
+
+        self.push_branch(
+
+            branch
+
+        )
+
+
+
+        return self.report
+        # -----------------------------------------------------
+    # Save Git Report
+    # -----------------------------------------------------
+
+    def save_report(self):
+
+        """
+        Save git operation report.
+        """
+
+
+        try:
+
+
+            self.report_file.parent.mkdir(
+
+                parents=True,
+
+                exist_ok=True
+
+            )
+
+
+
+            with open(
+
+                self.report_file,
+
+                "w",
+
+                encoding="utf-8"
+
+            ) as file:
+
+
+                json.dump(
+
+                    self.report,
+
+                    file,
+
+                    indent=4,
+
+                    default=str
+
+                )
+
+
+
+            logger.info(
+
+                "Git report created: %s",
+
+                self.report_file
+
+            )
+
+
+
+        except Exception as error:
+
+
+            logger.error(
+
+                "Unable to save git report: %s",
+
+                error
+
+            )
+
+
+            raise
+
+
+
+# ---------------------------------------------------------
+# CLI
+# ---------------------------------------------------------
+
+def create_arguments():
+
+    parser = argparse.ArgumentParser(
+
+        description=
+
+        "Enterprise Git Automation Engine"
+
     )
 
-    return result
 
+    parser.add_argument(
 
-def git(*args):
+        "--repo",
 
-    return run(["git", *args])
+        default=".",
 
+        help=
 
-def load_json(file):
+        "Repository path"
 
-    if not os.path.exists(file):
-        return []
-
-    with open(file, encoding="utf-8") as f:
-        return json.load(f)
-
-
-print("=" * 80)
-print("Git Manager")
-print("=" * 80)
-
-repo = os.getenv("GITHUB_REPOSITORY")
-
-if not repo:
-    print("GITHUB_REPOSITORY not found")
-    sys.exit(1)
-
-###############################################################
-# Current Branch
-###############################################################
-
-branch = git(
-    "rev-parse",
-    "--abbrev-ref",
-    "HEAD"
-).stdout.strip()
-
-print(f"Current Branch : {branch}")
-
-###############################################################
-# Feature Branch
-###############################################################
-
-timestamp = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
-
-feature_branch = f"drift-remediation/{timestamp}"
-
-print(f"Feature Branch : {feature_branch}")
-
-###############################################################
-# Create Branch
-###############################################################
-
-result = git(
-    "checkout",
-    "-b",
-    feature_branch
-)
-
-if result.returncode != 0:
-    print(result.stderr)
-    sys.exit(1)
-
-###############################################################
-# Stage Only Modified Terraform Files
-###############################################################
-
-writer = load_json(WRITER_REPORT)
-
-changed_files = []
-
-for item in writer:
-
-    if not item.get("modified"):
-        continue
-
-    file = item["file"]
-
-    if not os.path.exists(file):
-        continue
-
-    print(f"Adding : {file}")
-
-    result = git(
-        "add",
-        file
     )
 
-    if result.returncode == 0:
-        changed_files.append(file)
 
-###############################################################
-# Nothing Changed
-###############################################################
+    parser.add_argument(
 
-if len(changed_files) == 0:
+        "--message",
 
-    print("No Terraform changes detected.")
+        default=
 
-    report = {
-        "repository": repo,
-        "current_branch": branch,
-        "feature_branch": None,
-        "changed_files": [],
-        "commit": False,
-        "push": False
-    }
+        "Automated Terraform update",
 
-    os.makedirs("reports", exist_ok=True)
+        help=
 
-    with open(OUTPUT_FILE, "w") as f:
-        json.dump(report, f, indent=4)
+        "Commit message"
 
-    sys.exit(0)
+    )
 
-###############################################################
-# Commit
-###############################################################
 
-commit_message = "AI Terraform Drift Auto Remediation"
+    parser.add_argument(
 
-result = git(
-    "commit",
-    "-m",
-    commit_message
-)
+        "--report",
 
-if result.returncode != 0:
-    print(result.stderr)
-    sys.exit(1)
+        default=
 
-###############################################################
-# Commit SHA
-###############################################################
+        DEFAULT_REPORT,
 
-commit_sha = git(
-    "rev-parse",
-    "HEAD"
-).stdout.strip()
+        help=
 
-###############################################################
-# Push
-###############################################################
+        "Git execution report"
 
-result = git(
-    "push",
-    "--set-upstream",
-    "origin",
-    feature_branch
-)
+    )
 
-if result.returncode != 0:
-    print(result.stderr)
-    sys.exit(1)
 
-###############################################################
-# Report
-###############################################################
+    return parser.parse_args()
 
-report = {
-    "repository": repo,
-    "current_branch": branch,
-    "feature_branch": feature_branch,
-    "changed_files": changed_files,
-    "commit": True,
-    "push": True,
-    "commit_sha": commit_sha,
-    "commit_message": commit_message
-}
 
-os.makedirs("reports", exist_ok=True)
 
-with open(
-    OUTPUT_FILE,
-    "w",
-    encoding="utf-8"
-) as f:
+# ---------------------------------------------------------
+# Main Execution
+# ---------------------------------------------------------
 
-    json.dump(report, f, indent=4)
+def main():
 
-print()
-print("=" * 80)
-print("Git completed successfully.")
-print("=" * 80)
+
+    args = create_arguments()
+
+
+
+    manager = GitManager(
+
+        repository_path=args.repo,
+
+        report_file=args.report
+
+    )
+
+
+
+    try:
+
+
+        manager.execute_workflow(
+
+            commit_message=args.message
+
+        )
+
+
+        manager.save_report()
+
+
+
+        print(
+
+            "Git workflow completed"
+
+        )
+
+
+        print(
+
+            f"Report: {args.report}"
+
+        )
+
+
+
+    except Exception as error:
+
+
+        logger.exception(
+
+            "Git workflow failed: %s",
+
+            error
+
+        )
+
+
+        exit(1)
+
+
+
+if __name__ == "__main__":
+
+    main()

@@ -127,7 +127,7 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           commit-message: "chore(terraform): adopt detected infrastructure drift"
-          branch: terraform-drift
+          branch: terraform-ai-remediation
           # Keep the branch so the comparison/PR URL remains valid after the
           # workflow finishes. Delete it manually after the reviewed PR merges.
           delete-branch: false

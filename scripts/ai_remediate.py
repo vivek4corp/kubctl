@@ -128,3 +128,27 @@ Return one ```diff fenced block only.
         checked = subprocess.run(
             ["git", "apply", "--check", str(patch_path)],
             capture_output=True, text=True
+        )
+        if checked.returncode:
+            # Patch corrupt, keep file for PR review
+            report["reason"] = f"AI patch failed validation: {checked.stderr.strip()}"
+            report["patch_file"] = str(patch_path)
+        else:
+            subprocess.run(["git", "apply", str(patch_path)], check=True)
+            report["patch_applied"] = True
+            report["patch_file"] = str(patch_path)
+    except ValueError as error:
+        report["reason"] = str(error)
+
+    report_path = Path(args.report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(json.dumps(report))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as error:
+        print(f"AI remediation failed: {error}", file=sys.stderr)
+        sys.exit(1)

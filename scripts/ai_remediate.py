@@ -19,7 +19,6 @@ def read_drift(path: Path):
 
 
 def redact(value, key=""):
-    """Do not send credentials from plan JSON or tfvars to the AI service."""
     if any(word in key.lower() for word in SENSITIVE_KEYWORDS):
         return "<redacted>"
     if isinstance(value, dict):
@@ -34,7 +33,6 @@ def source_files(root: Path):
     for path in root.rglob("*"):
         if path.is_file() and path.suffix in ALLOWED_SUFFIXES and ".terraform" not in path.parts:
             content = path.read_text(encoding="utf-8")
-            # redact secrets in HCL assignments
             content = re.sub(
                 r'(?im)^(\\s*[^#\\n]*(?:password|secret|token|private_key|access_key|sas)[^=\\n]*=\\s*)([^\\n#]+)',
                 r'\\1"<redacted>"',
@@ -130,7 +128,6 @@ Return one ```diff fenced block only.
             capture_output=True, text=True
         )
         if checked.returncode:
-            # Patch corrupt, keep file for PR review
             report["reason"] = f"AI patch failed validation: {checked.stderr.strip()}"
             report["patch_file"] = str(patch_path)
         else:

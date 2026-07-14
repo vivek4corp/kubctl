@@ -79,7 +79,8 @@ class GitManager:
     def __init__(
         self,
         repository_path: str = ".",
-        report_file: str = DEFAULT_REPORT
+        report_file: str = DEFAULT_REPORT,
+        allow_push: bool = False
     ):
 
 
@@ -96,6 +97,8 @@ class GitManager:
             report_file
 
         )
+
+        self.allow_push = allow_push
 
 
 
@@ -831,11 +834,21 @@ class GitManager:
 
 
 
-        self.push_branch(
+        if self.allow_push:
 
-            branch
+            self.push_branch(
 
-        )
+                branch
+
+            )
+
+        else:
+
+            logger.warning(
+
+                "Branch push skipped; pass --allow-push to enable it"
+
+            )
 
 
 
@@ -973,6 +986,17 @@ def create_arguments():
     )
 
 
+    parser.add_argument(
+
+        "--allow-push",
+
+        action="store_true",
+
+        help="Explicitly allow this legacy script to push a branch to origin"
+
+    )
+
+
     return parser.parse_args()
 
 
@@ -992,7 +1016,9 @@ def main():
 
         repository_path=args.repo,
 
-        report_file=args.report
+        report_file=args.report,
+
+        allow_push=args.allow_push
 
     )
 

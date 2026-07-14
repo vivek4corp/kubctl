@@ -927,4 +927,199 @@ class TerraformParser:
 
 
         return self.inventory
+    # -----------------------------------------------------
+    # Save Inventory Report
+    # -----------------------------------------------------
 
+    def save_report(self):
+        """
+        Write terraform inventory JSON report.
+        """
+
+        try:
+
+            self.output_file.parent.mkdir(
+                parents=True,
+                exist_ok=True
+            )
+
+
+            with open(
+                self.output_file,
+                "w",
+                encoding="utf-8"
+            ) as file:
+
+
+                json.dump(
+
+                    self.inventory,
+
+                    file,
+
+                    indent=4,
+
+                    default=str
+
+                )
+
+
+            logger.info(
+                "Terraform inventory created: %s",
+                self.output_file
+            )
+
+
+        except Exception as error:
+
+            logger.error(
+                "Failed writing report: %s",
+                error
+            )
+
+            raise
+
+
+
+    # -----------------------------------------------------
+    # Parser Execution
+    # -----------------------------------------------------
+
+    def execute(self):
+        """
+        Complete parser workflow.
+        """
+
+
+        logger.info(
+            "Starting Terraform Parser"
+        )
+
+
+        self.parse_repository()
+
+
+
+        self.save_report()
+
+
+
+        logger.info(
+            "Terraform Parser completed successfully"
+        )
+
+
+        return self.inventory
+
+
+
+# ---------------------------------------------------------
+# Command Line Interface
+# ---------------------------------------------------------
+
+def create_arguments():
+
+    parser = argparse.ArgumentParser(
+
+        description=
+        "Enterprise Terraform Resource Parser"
+
+    )
+
+
+    parser.add_argument(
+
+        "--repo",
+
+        required=False,
+
+        default=".",
+
+        help=
+        "Terraform repository path"
+
+    )
+
+
+    parser.add_argument(
+
+        "--output",
+
+        required=False,
+
+        default=DEFAULT_OUTPUT,
+
+        help=
+        "Output JSON report path"
+
+    )
+
+
+    return parser.parse_args()
+
+
+
+# ---------------------------------------------------------
+# Main Entry Point
+# ---------------------------------------------------------
+
+def main():
+
+
+    args = create_arguments()
+
+
+
+    parser = TerraformParser(
+
+        repository_path=args.repo,
+
+        output_file=args.output
+
+    )
+
+
+
+    try:
+
+
+        parser.execute()
+
+
+
+        print(
+
+            "\nTerraform parsing completed"
+
+        )
+
+
+
+        print(
+
+            f"Report: {args.output}"
+
+        )
+
+
+
+    except Exception as error:
+
+
+        logger.exception(
+
+            "Terraform parsing failed: %s",
+
+            error
+
+        )
+
+
+        exit(1)
+
+
+
+
+if __name__ == "__main__":
+
+    main()

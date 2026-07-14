@@ -803,3 +803,221 @@ class TerraformValidator:
 
 
         return self.validation_gate()
+        # -----------------------------------------------------
+    # Save Validation Report
+    # -----------------------------------------------------
+
+    def save_report(self):
+
+        """
+        Save terraform validation report.
+        """
+
+
+        try:
+
+
+            self.report_file.parent.mkdir(
+
+                parents=True,
+
+                exist_ok=True
+
+            )
+
+
+
+            with open(
+
+                self.report_file,
+
+                "w",
+
+                encoding="utf-8"
+
+            ) as file:
+
+
+                json.dump(
+
+                    self.report,
+
+                    file,
+
+                    indent=4,
+
+                    default=str
+
+                )
+
+
+
+            logger.info(
+
+                "Validation report created: %s",
+
+                self.report_file
+
+            )
+
+
+
+        except Exception as error:
+
+
+            logger.error(
+
+                "Unable to save validation report: %s",
+
+                error
+
+            )
+
+
+            raise
+
+
+
+    # -----------------------------------------------------
+    # Complete Execution
+    # -----------------------------------------------------
+
+    def execute(self):
+
+        """
+        Complete validator workflow.
+        """
+
+
+        status = self.execute_validation()
+
+
+
+        self.save_report()
+
+
+
+        return status
+
+
+
+# ---------------------------------------------------------
+# CLI
+# ---------------------------------------------------------
+
+def create_arguments():
+
+    parser = argparse.ArgumentParser(
+
+        description=
+
+        "Enterprise Terraform Validation Engine"
+
+    )
+
+
+    parser.add_argument(
+
+        "--path",
+
+        default=".",
+
+        help=
+
+        "Terraform working directory"
+
+    )
+
+
+    parser.add_argument(
+
+        "--report",
+
+        default=DEFAULT_REPORT,
+
+        help=
+
+        "Validation report output"
+
+    )
+
+
+    return parser.parse_args()
+
+
+
+# ---------------------------------------------------------
+# Main
+# ---------------------------------------------------------
+
+def main():
+
+
+    args = create_arguments()
+
+
+
+    validator = TerraformValidator(
+
+        terraform_path=args.path,
+
+        report_file=args.report
+
+    )
+
+
+
+    try:
+
+
+        success = validator.execute()
+
+
+
+        if success:
+
+
+            print(
+
+                "Terraform validation PASSED"
+
+            )
+
+
+            exit(0)
+
+
+
+        else:
+
+
+            print(
+
+                "Terraform validation FAILED"
+
+            )
+
+
+            exit(1)
+
+
+
+    except Exception as error:
+
+
+        logger.exception(
+
+            "Validation execution failed: %s",
+
+            error
+
+        )
+
+
+        exit(1)
+
+
+
+if __name__ == "__main__":
+
+    main()

@@ -48,13 +48,22 @@ jobs:
           terraform plan -out=tfplan -detailed-exitcode -input=false
           exit_code=$?
           set -e
-          if [ "$exit_code" -eq 1 ]; then
-            echo "Terraform plan failed" >&2
+          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 2 ]; then
+            echo "Terraform plan failed with exit code $exit_code" >&2
             exit 1
           fi
-          echo "has_drift=$([ "$exit_code" -eq 2 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           terraform show -json tfplan > tfplan.json
           terraform show -json > tfstate.json
+
+          # The JSON plan is the source of truth. This also handles Terraform
+          # wrappers that do not preserve the detailed exit code.
+          if jq -e '[.resource_changes[]? | select(.change.actions != ["no-op"])] | length > 0' tfplan.json > /dev/null; then
+            echo "has_drift=true" >> "$GITHUB_OUTPUT"
+            echo "Terraform changes detected; the drift-review PR steps will run."
+          else
+            echo "has_drift=false" >> "$GITHUB_OUTPUT"
+            echo "No Terraform changes detected."
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -69,7 +78,16 @@ jobs:
         run: |
           mkdir -p reports
           python scripts/drift.py
+          python scripts/ai_remediate.py \
+            --drift reports/drift.json \
+            --terraform-root ${{ env.TF_WORKING_DIR }} \
+            --report reports/ai_remediation.json \
+            --patch reports/ai_remediation.patch
+          terraform fmt -recursive ${{ env.TF_WORKING_DIR }}
+          terraform -chdir=${{ env.TF_WORKING_DIR }} validate
           python scripts/drift_review.py --drift reports/drift.json --output drift-reviews/dev.md
+        env:
+          MODELS_PAT: ${{ secrets.MODELS_PAT }}
 
       - name: Generate optional diagnostics
         if: steps.plan.outputs.has_drift == 'true'

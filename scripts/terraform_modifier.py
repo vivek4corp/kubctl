@@ -4,15 +4,16 @@ import os
 DRIFT_FILE = "reports/drift.json"
 RESOURCE_FILE = "reports/terraform_resources.json"
 MODULE_FILE = "reports/module_mapping.json"
-OUTPUT_FILE = "reports/terraform_changes.json"
+
+OUTPUT_FILE = "reports/terraform_patch.json"
 
 
-def load_json(path):
-    if not os.path.exists(path):
-        print(f"{path} not found")
+def load_json(file):
+
+    if not os.path.exists(file):
         return []
 
-    with open(path, "r", encoding="utf-8") as f:
+    with open(file, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -20,104 +21,117 @@ drift = load_json(DRIFT_FILE)
 resources = load_json(RESOURCE_FILE)
 modules = load_json(MODULE_FILE)
 
-changes = []
+patches = []
 
 print("=" * 80)
-print("Terraform Change Generator")
+print("Generating Terraform Patch")
 print("=" * 80)
 
-for drift_resource in drift:
+for item in drift:
 
-    resource_address = drift_resource.get("resource")
-    resource_type = drift_resource.get("type")
-    actions = drift_resource.get("actions", [])
-    after = drift_resource.get("after", {})
+    resource_address = item.get("resource")
+    resource_type = item.get("type")
 
-    if not resource_address:
-        continue
+    after = item.get("after", {})
+    before = item.get("before", {})
 
-    ###########################################################
-    # Find Terraform Resource
-    ###########################################################
-
-    tf_resource = None
-
-    for resource in resources:
-
-        if resource["resource_type"] == resource_type:
-            tf_resource = resource
-            break
+    tf_resource = next(
+        (
+            r
+            for r in resources
+            if r["resource_type"] == resource_type
+        ),
+        None,
+    )
 
     if tf_resource is None:
-        print(f"Skipping {resource_address}")
         continue
 
-    ###########################################################
-    # Find Module
-    ###########################################################
+    module = next(
+        (
+            m
+            for m in modules
+            if resource_address.startswith(f"module.{m['module']}")
+        ),
+        None,
+    )
 
-    module_name = None
-    module_directory = None
+    operations = []
 
-    for module in modules:
-
-        if resource_address.startswith(f"module.{module['module']}"):
-
-            module_name = module["module"]
-            module_directory = module["directory"]
-            break
-
-    ###########################################################
-    # Prepare Attribute Changes
-    ###########################################################
-
-    attribute_changes = []
+    ############################################################
+    # Replace / Add
+    ############################################################
 
     for key, value in after.items():
 
-        if isinstance(value, (dict, list)):
+        if isinstance(value, (list, dict)):
             continue
 
-        attribute_changes.append({
-            "attribute": key,
-            "value": value
-        })
+        if before is None:
 
-    ###########################################################
-    # Build Change Object
-    ###########################################################
+            operations.append(
+                {
+                    "op": "add",
+                    "attribute": key,
+                    "value": value,
+                }
+            )
 
-    change = {
-        "resource": resource_address,
-        "resource_type": resource_type,
-        "resource_name": tf_resource["resource_name"],
-        "module": module_name,
-        "directory": module_directory,
-        "file": tf_resource["file"],
-        "actions": actions,
-        "changes": attribute_changes
-    }
+            continue
 
-    changes.append(change)
+        if key not in before:
 
-    print()
-    print(f"Resource : {resource_address}")
-    print(f"Module   : {module_name}")
-    print(f"File     : {tf_resource['file']}")
-    print(f"Changes  : {len(attribute_changes)}")
-    print("-" * 80)
+            operations.append(
+                {
+                    "op": "add",
+                    "attribute": key,
+                    "value": value,
+                }
+            )
 
-###########################################################
-# Save
-###########################################################
+            continue
 
-os.makedirs("reports", exist_ok=True)
+        if before[key] != value:
 
-with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
-    json.dump(changes, f, indent=4)
+            operations.append(
+                {
+                    "op": "replace",
+                    "attribute": key,
+                    "value": value,
+                }
+            )
+
+    ############################################################
+    # Remove
+    ############################################################
+
+    if before:
+
+        for key in before:
+
+            if key not in after:
+
+                operations.append(
+                    {
+                        "op": "remove",
+                        "attribute": key,
+                    }
+                )
+
+    patches.append(
+        {
+            "resource": resource_address,
+            "module": module["module"] if module else None,
+            "directory": module["directory"] if module else None,
+            "file": tf_resource["file"],
+            "resource_type": resource_type,
+            "resource_name": tf_resource["resource_name"],
+            "operations": operations,
+        }
+    )
+
+with open(OUTPUT_FILE, "w") as f:
+    json.dump(patches, f, indent=4)
 
 print()
-print("=" * 80)
-print(f"Changes Generated : {len(changes)}")
-print(f"Saved             : {OUTPUT_FILE}")
-print("=" * 80)
+print(f"Generated {OUTPUT_FILE}")

@@ -1,71 +1,160 @@
+import json
 import os
 import sys
 from datetime import datetime
+
 from git import Repo, GitCommandError
 
-REPO_PATH = "."
-OUTPUT_FILE = "reports/git_info.json"
+REPORT = "reports/git_info.json"
 
 
 def main():
+
     try:
-        repo = Repo(REPO_PATH)
-    except Exception as e:
-        print(f"Failed to open git repository: {e}")
+        repo = Repo(".")
+    except Exception as ex:
+        print(ex)
         sys.exit(1)
 
     if repo.bare:
-        print("Repository is bare.")
+        print("Invalid git repository")
         sys.exit(1)
 
-    branch_name = f"drift-fix-{datetime.utcnow().strftime('%Y%m%d-%H%M%S')}"
+    ####################################################################
+    # Current Branch
+    ####################################################################
 
-    print("=" * 70)
+    current_branch = repo.active_branch.name
+
+    ####################################################################
+    # Create Feature Branch
+    ####################################################################
+
+    branch_name = (
+        "terraform-drift-"
+        + datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+    )
+
+    print("=" * 80)
     print("Git Manager")
-    print("=" * 70)
+    print("=" * 80)
+
+    print(f"Current Branch : {current_branch}")
+    print(f"New Branch     : {branch_name}")
 
     try:
-        print(f"Creating branch: {branch_name}")
+
         repo.git.checkout("-b", branch_name)
 
-        with repo.config_writer() as config:
-            config.set_value("user", "name", "Terraform Drift Agent")
-            config.set_value("user", "email", "terraform-agent@github.local")
+    except GitCommandError as ex:
 
-        repo.git.add(A=True)
+        print(ex)
 
-        if not repo.is_dirty(untracked_files=True):
-            print("No changes detected.")
-            return
+        sys.exit(1)
 
-        commit = repo.index.commit(
-            "AI Auto Remediation - Terraform Drift Fix"
+    ####################################################################
+    # Git Config
+    ####################################################################
+
+    with repo.config_writer() as cfg:
+
+        cfg.set_value("user", "name", "Terraform Drift Agent")
+        cfg.set_value(
+            "user",
+            "email",
+            "terraform-agent@github.local"
         )
 
-        print(f"Commit Created : {commit.hexsha}")
+    ####################################################################
+    # Stage Only Required Files
+    ####################################################################
 
-        origin = repo.remote(name="origin")
+    staged = []
 
-        print("Pushing branch...")
-        origin.push(branch_name)
+    allowed_extensions = (
+        ".tf",
+        ".tfvars",
+        ".json",
+        ".md"
+    )
 
-        os.makedirs("reports", exist_ok=True)
+    for item in repo.index.diff(None):
 
-        with open(OUTPUT_FILE, "w") as f:
-            f.write(
-                f"""{{
-    "branch":"{branch_name}",
-    "commit":"{commit.hexsha}"
-}}
-"""
-            )
+        path = item.a_path
 
-        print(f"Git information saved to {OUTPUT_FILE}")
+        if path.endswith(allowed_extensions):
 
-    except GitCommandError as e:
-        print(e)
-        sys.exit(1)
+            repo.git.add(path)
+
+            staged.append(path)
+
+    ####################################################################
+    # Untracked Files
+    ####################################################################
+
+    for path in repo.untracked_files:
+
+        if path.endswith(allowed_extensions):
+
+            repo.git.add(path)
+
+            staged.append(path)
+
+    ####################################################################
+    # Nothing Changed
+    ####################################################################
+
+    if len(staged) == 0:
+
+        print("No Terraform changes detected.")
+
+        return
+
+    ####################################################################
+    # Commit
+    ####################################################################
+
+    commit = repo.index.commit(
+        "AI Drift Auto Remediation"
+    )
+
+    print(f"Commit : {commit.hexsha}")
+
+    ####################################################################
+    # Push
+    ####################################################################
+
+    origin = repo.remote("origin")
+
+    origin.push(
+        refspec=f"{branch_name}:{branch_name}"
+    )
+
+    print("Branch pushed successfully.")
+
+    ####################################################################
+    # Report
+    ####################################################################
+
+    os.makedirs("reports", exist_ok=True)
+
+    data = {
+
+        "current_branch": current_branch,
+        "feature_branch": branch_name,
+        "commit": commit.hexsha,
+        "files": staged
+
+    }
+
+    with open(REPORT, "w") as f:
+
+        json.dump(data, f, indent=4)
+
+    print()
+    print(f"Report written : {REPORT}")
 
 
 if __name__ == "__main__":
+
     main()

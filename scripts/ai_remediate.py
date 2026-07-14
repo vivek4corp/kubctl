@@ -140,7 +140,7 @@ Drift data:
     response.raise_for_status()
     answer = response.json()["choices"][0]["message"]["content"]
 
-    report = {"model": MODEL, "resources": len(resources), "patch_applied": False}
+    report = {"model": MODEL, "resources": len(resources), "patch_applied": true}
     try:
         diff = extract_diff(answer)
         validate_paths(diff, root)

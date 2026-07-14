@@ -9,7 +9,6 @@ variable "infra_config" {
       rg_key                  = string
       account_tier            = optional(string, "Standard")
       account_replication_type = optional(string, "LRS")
-      kind                    = optional(string, "StorageV2")
       tags                    = optional(map(string), {})
     }))
   })

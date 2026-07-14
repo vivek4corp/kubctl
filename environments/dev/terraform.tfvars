@@ -9,7 +9,7 @@ infra_config = {
     "stgmicrodev123" = {
       rg_key                  = "rg-micro-dev"
       account_tier            = "Standard"
-      account_replication_type = "LRS"
+      account_replication_type = "ZRS"
       tags                    = { Environment = "Dev", ManagedBy = "Terraform" }
     }
   }

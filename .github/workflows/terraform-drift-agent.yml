@@ -154,6 +154,13 @@ jobs:
     - name: Resolve Terraform Modules
       run: python scripts/module_resolver.py
 
+      ##########################################################
+      # Terraform Inventory
+      ##########################################################
+
+    - name: Terraform Inventory
+      run: python scripts/terraform_inventory.py
+
     ##########################################################
     # Parse Terraform Configuration
     ##########################################################

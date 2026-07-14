@@ -3,20 +3,23 @@ import os
 
 DRIFT_FILE = "reports/drift.json"
 RESOURCE_FILE = "reports/terraform_resources.json"
-OUTPUT_FILE = "reports/change_request.json"
+MODULE_FILE = "reports/module_mapping.json"
+OUTPUT_FILE = "reports/terraform_changes.json"
 
 
-def load_json(path):
+def load(path):
+
     if not os.path.exists(path):
-        print(f"ERROR: {path} not found.")
+        print(f"{path} not found")
         return []
 
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 
-drift = load_json(DRIFT_FILE)
-resources = load_json(RESOURCE_FILE)
+drift = load(DRIFT_FILE)
+resources = load(RESOURCE_FILE)
+modules = load(MODULE_FILE)
 
 changes = []
 
@@ -26,41 +29,95 @@ print("=" * 80)
 
 for item in drift:
 
-    if "after" not in item:
+    resource_address = item.get("resource")
+    resource_type = item.get("type")
+    after = item.get("after", {})
+    actions = item.get("actions", [])
+
+    if not after:
         continue
 
-    resource_type = item.get("type")
+    ####################################################################
+    # Find Resource Definition
+    ####################################################################
 
-    matched = next(
+    tf_resource = next(
+
         (
-            r for r in resources
+            r
+            for r in resources
             if r["resource_type"] == resource_type
         ),
+
         None
+
     )
 
-    if matched is None:
-        print(f"No Terraform file found for {resource_type}")
+    if tf_resource is None:
+
+        print(f"Terraform resource not found: {resource_type}")
+
         continue
 
-    after = item.get("after") or {}
+    ####################################################################
+    # Find Module
+    ####################################################################
+
+    module = next(
+
+        (
+            m
+            for m in modules
+            if resource_address.startswith("module." + m["module"])
+        ),
+
+        None
+
+    )
+
+    if module:
+
+        directory = module["directory"]
+
+    else:
+
+        directory = os.path.dirname(tf_resource["file"])
+
+    ####################################################################
+    # Build Change Object
+    ####################################################################
 
     change = {
-        "resource_type": matched["resource_type"],
-        "resource_name": matched["resource_name"],
-        "file": matched["file"],
-        "changes": after
+
+        "resource": resource_address,
+
+        "resource_type": resource_type,
+
+        "resource_name": tf_resource["resource_name"],
+
+        "file": tf_resource["file"],
+
+        "module": directory,
+
+        "actions": actions,
+
+        "attributes": after
+
     }
 
     changes.append(change)
 
-    print(f"Resource : {matched['resource_type']}.{matched['resource_name']}")
-    print(f"File     : {matched['file']}")
+    print()
+    print(f"Resource : {resource_address}")
+    print(f"Type     : {resource_type}")
+    print(f"File     : {tf_resource['file']}")
+    print(f"Module   : {directory}")
     print("-" * 80)
 
 os.makedirs("reports", exist_ok=True)
 
 with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+
     json.dump(changes, f, indent=4)
 
 print()

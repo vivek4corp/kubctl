@@ -1,54 +1,64 @@
-import os
-import re
 import json
+import os
 
-ROOT = "."
-OUTPUT = "reports/terraform_resources.json"
+INVENTORY_FILE = "reports/terraform_inventory.json"
+OUTPUT_FILE = "reports/terraform_resources.json"
+
+
+def load_json(path):
+
+    if not os.path.exists(path):
+        print(f"{path} not found")
+        return []
+
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+inventory = load_json(INVENTORY_FILE)
 
 resources = []
 
-for root, dirs, files in os.walk(ROOT):
+print("=" * 80)
+print("Terraform Resource Parser")
+print("=" * 80)
 
-    # Skip Terraform cache
-    if ".terraform" in root:
-        continue
+for item in inventory:
 
-    for file in files:
+    resource = {
 
-        if not file.endswith(".tf"):
-            continue
+        "module": item["module"],
 
-        filepath = os.path.join(root, file)
+        "directory": item["directory"],
 
-        with open(filepath, "r", encoding="utf-8") as f:
-            content = f.read()
+        "file": item["file"],
 
-        pattern = re.compile(
-            r'resource\s+"([^"]+)"\s+"([^"]+)"',
-            re.MULTILINE
-        )
+        "resource_type": item["resource_type"],
 
-        for match in pattern.finditer(content):
+        "resource_name": item["resource_name"],
 
-            resources.append({
-                "resource_type": match.group(1),
-                "resource_name": match.group(2),
-                "file": filepath
-            })
+        "attributes": item["attributes"]
+
+    }
+
+    resources.append(resource)
+
+    print()
+
+    print(f"Module        : {item['module']}")
+    print(f"Resource Type : {item['resource_type']}")
+    print(f"Resource Name : {item['resource_name']}")
+    print(f"File          : {item['file']}")
+
+    print("-" * 80)
 
 os.makedirs("reports", exist_ok=True)
 
-with open(OUTPUT, "w", encoding="utf-8") as f:
+with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
     json.dump(resources, f, indent=4)
 
-print("=" * 70)
-print("Terraform Resources")
-print("=" * 70)
-
-for r in resources:
-    print(
-        f'{r["resource_type"]} -> {r["resource_name"]} '
-        f'({r["file"]})'
-    )
-
-print(f"\nSaved: {OUTPUT}")
+print()
+print("=" * 80)
+print(f"Resources Parsed : {len(resources)}")
+print(f"Saved            : {OUTPUT_FILE}")
+print("=" * 80)

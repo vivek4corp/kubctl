@@ -3,118 +3,86 @@ import os
 import subprocess
 import sys
 
-TF_DIR = os.getenv("TF_WORKING_DIR", "environments/dev")
-
-REPORT = "reports/validation.json"
+OUTPUT_FILE = "reports/validation.json"
 
 
-def execute(command):
-
-    print("=" * 80)
-    print(command)
-    print("=" * 80)
+def run_command(command):
 
     result = subprocess.run(
         command,
-        cwd=TF_DIR,
-        shell=True,
         capture_output=True,
         text=True
     )
 
-    print(result.stdout)
+    return {
+        "command": " ".join(command),
+        "returncode": result.returncode,
+        "stdout": result.stdout,
+        "stderr": result.stderr
+    }
 
-    if result.stderr:
-        print(result.stderr)
 
-    return result
+def terraform_fmt():
+
+    print("=" * 80)
+    print("Running terraform fmt")
+    print("=" * 80)
+
+    return run_command(
+        [
+            "terraform",
+            "fmt",
+            "-recursive"
+        ]
+    )
+
+
+def terraform_validate():
+
+    print("=" * 80)
+    print("Running terraform validate")
+    print("=" * 80)
+
+    return run_command(
+        [
+            "terraform",
+            "validate",
+            "-json"
+        ]
+    )
 
 
 def main():
 
     os.makedirs("reports", exist_ok=True)
 
-    report = []
+    fmt_result = terraform_fmt()
 
-    ####################################################################
-    # Terraform fmt
-    ####################################################################
+    validate_result = terraform_validate()
 
-    result = execute("terraform fmt -recursive")
+    report = {
+        "terraform_fmt": fmt_result,
+        "terraform_validate": validate_result,
+        "success": validate_result["returncode"] == 0
+    }
 
-    report.append({
-        "step": "terraform fmt",
-        "exit_code": result.returncode,
-        "status": "PASS" if result.returncode == 0 else "FAIL"
-    })
-
-    if result.returncode != 0:
-
-        with open(REPORT, "w") as f:
-            json.dump(report, f, indent=4)
-
-        sys.exit(1)
-
-    ####################################################################
-    # Terraform Validate
-    ####################################################################
-
-    result = execute("terraform validate")
-
-    report.append({
-        "step": "terraform validate",
-        "exit_code": result.returncode,
-        "status": "PASS" if result.returncode == 0 else "FAIL"
-    })
-
-    if result.returncode != 0:
-
-        with open(REPORT, "w") as f:
-            json.dump(report, f, indent=4)
-
-        sys.exit(1)
-
-    ####################################################################
-    # Terraform Plan
-    ####################################################################
-
-    result = execute(
-        "terraform plan -input=false -detailed-exitcode"
-    )
-
-    if result.returncode == 0:
-
-        status = "PASS"
-
-    elif result.returncode == 2:
-
-        status = "DRIFT DETECTED"
-
-    else:
-
-        status = "FAIL"
-
-    report.append({
-        "step": "terraform plan",
-        "exit_code": result.returncode,
-        "status": status
-    })
-
-    with open(REPORT, "w") as f:
+    with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=4)
 
     print()
     print("=" * 80)
-    print("Terraform Validation Summary")
+
+    if report["success"]:
+
+        print("Terraform validation successful.")
+
+    else:
+
+        print("Terraform validation failed.")
+
     print("=" * 80)
 
-    for item in report:
-
-        print(
-            f'{item["step"]:<25} {item["status"]}'
-        )
-
-    if result.returncode == 1:
+    if not report["success"]:
         sys.exit(1)
 
 

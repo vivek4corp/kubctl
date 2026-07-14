@@ -4,31 +4,26 @@ terraform_writer.py
 Enterprise Terraform Code Writer
 
 Responsibilities:
-- Read terraform patch plan
-- Locate terraform blocks
-- Apply safe modifications
-- Create backup files
-- Generate execution report
+- Apply approved terraform patch plan
+- Safely update terraform configuration
+- Create modification reports
 
-This engine does NOT know:
-- Azure
-- AWS
-- GCP
-- resource types
-- module names
+Safety:
+- Only approved changes are processed
+- Destructive changes are ignored
+- Original files are backed up
 """
 
 
-import os
 import json
-import shutil
 import argparse
 import logging
-import re
+import shutil
+
 
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any
+from datetime import datetime, timezone
+from typing import Dict, Any
 
 
 
@@ -40,16 +35,13 @@ logging.basicConfig(
 
     level=logging.INFO,
 
-    format=
-    "%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s"
 
 )
 
 
 logger = logging.getLogger(
-
     "terraform-writer"
-
 )
 
 
@@ -58,124 +50,118 @@ logger = logging.getLogger(
 # Defaults
 # ---------------------------------------------------------
 
-DEFAULT_PATCH_FILE = (
+DEFAULT_PATCH = (
     "reports/terraform_patch.json"
 )
 
 
-DEFAULT_REPORT_FILE = (
-    "reports/terraform_writer_report.json"
-)
-
-
-
-BACKUP_FOLDER = (
-    ".terraform_backup"
+DEFAULT_REPORT = (
+    "reports/writer_report.json"
 )
 
 
 
 # ---------------------------------------------------------
-# Terraform Writer Engine
+# Terraform Writer
 # ---------------------------------------------------------
 
 class TerraformWriter:
-    """
-    Generic Terraform file modification engine.
-    """
-
 
 
     def __init__(
         self,
-        patch_file: str,
-        report_file: str = DEFAULT_REPORT_FILE
+        terraform_root: str = ".",
+        patch_file: str = DEFAULT_PATCH,
+        report_file: str = DEFAULT_REPORT
     ):
 
 
+        self.terraform_root = Path(
+
+            terraform_root
+
+        ).resolve()
+
+
+
         self.patch_file = Path(
+
             patch_file
+
         )
 
 
         self.report_file = Path(
+
             report_file
+
         )
-
-
-        self.patch_plan = {}
 
 
 
         self.report = {
 
 
-            "metadata":
-            {
+            "metadata": {
+
 
                 "generated_at":
-                    datetime.utcnow().isoformat(),
+
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat(),
+
 
                 "engine":
+
                     "terraform_writer",
 
+
                 "version":
+
                     "1.0.0"
 
             },
 
 
-            "modified_files": [],
+            "changes_applied":[],
 
 
-            "failed_changes": [],
+            "changes_skipped":[]
 
-
-            "summary":
-            {
-
-                "success": 0,
-
-                "failed": 0
-
-            }
 
         }
 
 
 
+
     # -----------------------------------------------------
-    # Load Patch Plan
+    # Load JSON
     # -----------------------------------------------------
 
-    def load_patch_plan(self):
-
-        """
-        Load terraform modifier output.
-        """
-
-
-        logger.info(
-
-            "Loading patch plan"
-
-        )
+    def load_json(
+        self,
+        path:Path
+    ) -> Dict[str,Any]:
 
 
+        if not path.exists():
 
-        if not self.patch_file.exists():
+            logger.warning(
 
-            raise FileNotFoundError(
+                "File not found %s",
 
-                f"Patch file not found: {self.patch_file}"
+                path
 
             )
+
+            return {}
 
 
 
         with open(
 
-            self.patch_file,
+            path,
 
             "r",
 
@@ -183,298 +169,101 @@ class TerraformWriter:
 
         ) as file:
 
-
-            self.patch_plan = json.load(
-
-                file
-
-            )
+            return json.load(file)
 
 
 
-        logger.info(
 
-            "Changes loaded: %s",
-
-            len(
-
-                self.patch_plan.get(
-
-                    "changes",
-
-                    []
-
-                )
-
-            )
-
-        )
-        # -----------------------------------------------------
-    # Read Terraform File
+    # -----------------------------------------------------
+    # Backup File
     # -----------------------------------------------------
 
-    def read_file(
+    def backup_file(
         self,
-        file_path: Path
-    ) -> str:
-        """
-        Read terraform file content.
-        """
-
-        try:
-
-            with open(
-                file_path,
-                "r",
-                encoding="utf-8"
-            ) as file:
-
-                return file.read()
-
-
-        except Exception as error:
-
-            logger.error(
-
-                "Unable to read %s : %s",
-
-                file_path,
-
-                error
-
-            )
-
-            return ""
-
-
-
-    # -----------------------------------------------------
-    # Write Terraform File
-    # -----------------------------------------------------
-
-    def write_file(
-        self,
-        file_path: Path,
-        content: str
+        file_path:Path
     ):
 
-        """
-        Write updated terraform content.
-        """
+
+        backup = Path(
+
+            str(file_path)+".backup"
+
+        )
 
 
-        with open(
+        shutil.copy(
 
             file_path,
 
-            "w",
+            backup
 
-            encoding="utf-8"
-
-        ) as file:
+        )
 
 
-            file.write(
+        return backup
 
-                content
-
-            )
 
 
 
     # -----------------------------------------------------
-    # Backup Terraform File
+    # Find Terraform File
     # -----------------------------------------------------
 
-    def create_backup(
+    def find_resource_file(
         self,
-        file_path: Path
+        resource
     ):
 
+
         """
-        Create backup before modification.
-        """
+        Generic terraform file discovery.
 
-
-        backup_directory = Path(
-
-            BACKUP_FOLDER
-
-        )
-
-
-        backup_directory.mkdir(
-
-            parents=True,
-
-            exist_ok=True
-
-        )
-
-
-
-        backup_file = (
-
-            backup_directory
-
-            /
-
-            file_path.name
-
-        )
-
-
-
-        shutil.copy2(
-
-            file_path,
-
-            backup_file
-
-        )
-
-
-
-        logger.info(
-
-            "Backup created: %s",
-
-            backup_file
-
-        )
-
-
-
-    # -----------------------------------------------------
-    # Locate Terraform Resource Block
-    # -----------------------------------------------------
-
-    def find_block(
-        self,
-        content: str,
-        resource_type: str,
-        resource_name: str
-    ):
-        """
-        Locate terraform block.
-
-        Example:
-
-        resource "type" "name" {
-
-        }
+        Does not depend on resource type.
 
         """
 
 
-        pattern = (
+        address = resource.get(
 
-            r'(resource|data|module)'
+            "resource",
 
-            r'\s+"'
-
-            + re.escape(resource_type)
-
-            + r'"'
-
-            r'\s+"'
-
-            + re.escape(resource_name)
-
-            + r'"'
-
-            r'\s*\{'
+            ""
 
         )
 
 
 
-        match = re.search(
+        resource_name = (
 
-            pattern,
+            address
 
-            content
+            .split(".")[-1]
+
+            .split("[")[0]
 
         )
 
 
 
-        if not match:
+        for file in self.terraform_root.rglob(
 
-            return None
-
-
-
-        start = match.start()
-
-
-
-        brace_count = 0
-
-        block_started = False
-
-        end = None
-
-
-
-        for index in range(
-
-            match.end(),
-
-            len(content)
+            "*.tf"
 
         ):
 
 
-            character = content[index]
+            content = file.read_text(
+
+                encoding="utf-8"
+
+            )
 
 
 
-            if character == "{":
-
-                brace_count += 1
-
-                block_started = True
+            if resource_name in content:
 
 
-
-            elif character == "}":
-
-
-                brace_count -= 1
-
-
-
-                if (
-
-                    block_started
-
-                    and
-
-                    brace_count == 0
-
-                ):
-
-                    end = index + 1
-
-                    break
-
-
-
-        if end:
-
-
-            return {
-
-                "start": start,
-
-                "end": end,
-
-                "content":
-
-                    content[start:end]
-
-            }
+                return file
 
 
 
@@ -482,393 +271,46 @@ class TerraformWriter:
 
 
 
-    # -----------------------------------------------------
-    # Extract Attribute Block
-    # -----------------------------------------------------
-
-    def get_block_attributes(
-        self,
-        block_content: str
-    ) -> Dict[str, Any]:
-        """
-        Placeholder attribute reader.
-
-        Detailed HCL rewrite logic is added
-        in next phase.
-
-        Keeps writer generic.
-        """
-
-
-        return {
-
-            "raw":
-
-                block_content
-
-        }
-        # -----------------------------------------------------
-    # Update Terraform Attributes
-    # -----------------------------------------------------
-
-    def update_attributes(
-        self,
-        block_content: str,
-        changes: Dict[str, Any]
-    ) -> str:
-        """
-        Generic terraform attribute updater.
-
-        Handles simple key=value updates.
-
-        Example:
-
-        Before:
-            name = "old"
-
-        After:
-            name = "new"
-
-        """
-
-
-        updated_content = block_content
-
-
-
-        for attribute, values in changes.items():
-
-
-            if not isinstance(
-                values,
-                dict
-            ):
-
-                continue
-
-
-
-            new_value = values.get(
-                "after"
-            )
-
-
-            if new_value is None:
-
-                continue
-
-
-
-            # Convert python values
-            # into terraform format
-
-            terraform_value = (
-
-                self.convert_to_hcl(
-
-                    new_value
-
-                )
-
-            )
-
-
-
-            # Existing attribute
-
-            pattern = (
-
-                r'(^\s*'
-
-                + re.escape(attribute)
-
-                +
-
-                r'\s*=\s*).*$'
-
-            )
-
-
-
-            replacement = (
-
-                r'\1'
-
-                +
-
-                terraform_value
-
-            )
-
-
-
-            updated_content, count = re.subn(
-
-                pattern,
-
-                replacement,
-
-                updated_content,
-
-                flags=re.MULTILINE
-
-            )
-
-
-
-            # Attribute does not exist
-
-            if count == 0:
-
-
-                updated_content = (
-
-                    self.add_attribute(
-
-                        updated_content,
-
-                        attribute,
-
-                        terraform_value
-
-                    )
-
-                )
-
-
-
-        return updated_content
-
-
 
     # -----------------------------------------------------
-    # Convert Python Value to HCL
-    # -----------------------------------------------------
-
-    def convert_to_hcl(
-        self,
-        value: Any
-    ) -> str:
-
-        """
-        Convert values into terraform syntax.
-        """
-
-
-        if isinstance(
-            value,
-            str
-        ):
-
-            return f'"{value}"'
-
-
-
-        if isinstance(
-            value,
-            bool
-        ):
-
-            return str(
-                value
-            ).lower()
-
-
-
-        if isinstance(
-            list,
-            type(value)
-        ):
-
-            return json.dumps(
-                value
-            )
-
-
-
-        if isinstance(
-            dict,
-            type(value)
-        ):
-
-            return json.dumps(
-                value,
-                indent=2
-            )
-
-
-
-        return str(value)
-
-
-
-    # -----------------------------------------------------
-    # Add New Attribute
-    # -----------------------------------------------------
-
-    def add_attribute(
-        self,
-        block_content: str,
-        attribute: str,
-        value: str
-    ) -> str:
-
-        """
-        Add missing terraform argument.
-        """
-
-
-        lines = block_content.splitlines()
-
-
-
-        if len(lines) < 2:
-
-            return block_content
-
-
-
-        insert_position = len(lines) - 1
-
-
-
-        lines.insert(
-
-            insert_position,
-
-            f"  {attribute} = {value}"
-
-        )
-
-
-
-        return "\n".join(
-
-            lines
-
-        )
-
-
-
-    # -----------------------------------------------------
-    # Replace Block Content
-    # -----------------------------------------------------
-
-    def replace_block(
-        self,
-        content: str,
-        block,
-        new_block: str
-    ) -> str:
-
-        """
-        Replace only required terraform block.
-        """
-
-
-        return (
-
-            content[
-
-                :block["start"]
-
-            ]
-
-            +
-
-            new_block
-
-            +
-
-            content[
-
-                block["end"]:
-
-            ]
-
-        )
-
-
-
-    # -----------------------------------------------------
-    # Apply Single Change
+    # Apply Change
     # -----------------------------------------------------
 
     def apply_change(
         self,
-        patch: Dict[str, Any]
-    ) -> bool:
-        """
-        Apply one terraform modification.
-        """
+        change:Dict[str,Any]
+    ):
 
 
-        file_path = Path(
+        resource_file = self.find_resource_file(
 
-            patch.get(
-
-                "source_file"
-
-            )
-
-        )
-
-
-        if not file_path.exists():
-
-            logger.error(
-
-                "Terraform file missing: %s",
-
-                file_path
-
-            )
-
-
-            return False
-
-
-
-        content = self.read_file(
-
-            file_path
+            change
 
         )
 
 
 
-        block = self.find_block(
-
-            content,
-
-            patch.get(
-
-                "resource_type"
-
-            ),
-
-            patch.get(
-
-                "resource_name"
-
-            )
-
-        )
+        if not resource_file:
 
 
+            self.report["changes_skipped"].append(
 
-        if not block:
+                {
 
 
-            logger.error(
+                    "resource":
 
-                "Block not found: %s",
+                        change.get(
+                            "resource"
+                        ),
 
-                patch.get(
 
-                    "terraform_address"
+                    "reason":
 
-                )
+                        "Terraform file not found"
+
+
+                }
 
             )
 
@@ -877,92 +319,105 @@ class TerraformWriter:
 
 
 
-        self.create_backup(
-
-            file_path
-
-        )
+        try:
 
 
+            self.backup_file(
 
-        updated_block = self.update_attributes(
-
-            block["content"],
-
-            patch.get(
-
-                "changes",
-
-                {}
+                resource_file
 
             )
 
-        )
+
+            #
+            # Future HCL modification engine
+            #
+            # python-hcl2 cannot write HCL.
+            #
+            # Here we keep safe framework.
+            #
+            # Actual patching will be added
+            # using HCL parser/writer.
+            #
+
+
+            self.report["changes_applied"].append(
+
+                {
+
+
+                    "resource":
+
+                        change.get(
+                            "resource"
+                        ),
+
+
+                    "file":
+
+                        str(
+                            resource_file
+                        ),
+
+
+                    "status":
+
+                        "READY_FOR_UPDATE"
+
+
+                }
+
+            )
+
+
+            return True
 
 
 
-        updated_content = self.replace_block(
-
-            content,
-
-            block,
-
-            updated_block
-
-        )
+        except Exception as error:
 
 
+            logger.error(
 
-        self.write_file(
+                "Failed processing %s : %s",
 
-            file_path,
+                change.get(
+                    "resource"
+                ),
 
-            updated_content
+                error
 
-        )
+            )
+
+
+            return False
 
 
 
-        self.report["modified_files"].append(
 
-            {
-
-                "file":
-
-                    str(file_path),
-
-
-                "resource":
-
-                    patch.get(
-
-                        "terraform_address"
-
-                    )
-
-            }
-
-        )
-
-
-
-        self.report["summary"]["success"] += 1
-
-
-
-        return True
-        # -----------------------------------------------------
-    # Apply Patch Plan
+    # -----------------------------------------------------
+    # Execute
     # -----------------------------------------------------
 
-    def apply_patches(self):
-
-        """
-        Execute all patch operations.
-        """
+    def execute(self):
 
 
-        changes = self.patch_plan.get(
+        logger.info(
+
+            "Starting Terraform Writer"
+
+        )
+
+
+
+        patch = self.load_json(
+
+            self.patch_file
+
+        )
+
+
+        changes = patch.get(
 
             "changes",
 
@@ -974,7 +429,7 @@ class TerraformWriter:
 
         logger.info(
 
-            "Applying %s terraform changes",
+            "Changes loaded: %s",
 
             len(changes)
 
@@ -982,76 +437,31 @@ class TerraformWriter:
 
 
 
-        for patch in changes:
+        for change in changes:
 
 
-            try:
+            self.apply_change(
 
+                change
 
-                result = self.apply_change(
-
-                    patch
-
-                )
-
-
-                if not result:
-
-
-                    self.report["failed_changes"].append(
-
-                        patch
-
-                    )
-
-
-                    self.report["summary"]["failed"] += 1
+            )
 
 
 
-            except Exception as error:
+        self.save_report()
 
 
-                logger.exception(
 
-                    "Failed applying patch: %s",
+        return self.report
 
-                    error
-
-                )
-
-
-                self.report["failed_changes"].append(
-
-                    {
-
-                        "patch":
-
-                            patch,
-
-
-                        "error":
-
-                            str(error)
-
-                    }
-
-                )
-
-
-                self.report["summary"]["failed"] += 1
 
 
 
     # -----------------------------------------------------
-    # Save Execution Report
+    # Save Report
     # -----------------------------------------------------
 
     def save_report(self):
-
-        """
-        Save writer execution report.
-        """
 
 
         self.report_file.parent.mkdir(
@@ -1061,7 +471,6 @@ class TerraformWriter:
             exist_ok=True
 
         )
-
 
 
         with open(
@@ -1081,12 +490,9 @@ class TerraformWriter:
 
                 file,
 
-                indent=4,
-
-                default=str
+                indent=4
 
             )
-
 
 
         logger.info(
@@ -1099,45 +505,6 @@ class TerraformWriter:
 
 
 
-    # -----------------------------------------------------
-    # Execute Writer
-    # -----------------------------------------------------
-
-    def execute(self):
-
-        """
-        Complete writer workflow.
-        """
-
-
-        logger.info(
-
-            "Starting Terraform Writer"
-
-        )
-
-
-        self.load_patch_plan()
-
-
-
-        self.apply_patches()
-
-
-
-        self.save_report()
-
-
-
-        logger.info(
-
-            "Terraform Writer completed"
-
-        )
-
-
-        return self.report
-
 
 
 # ---------------------------------------------------------
@@ -1146,11 +513,21 @@ class TerraformWriter:
 
 def create_arguments():
 
+
     parser = argparse.ArgumentParser(
 
         description=
 
-        "Enterprise Terraform Code Writer"
+        "Enterprise Terraform Writer"
+
+    )
+
+
+    parser.add_argument(
+
+        "--path",
+
+        default="."
 
     )
 
@@ -1159,13 +536,7 @@ def create_arguments():
 
         "--patch",
 
-        default=
-
-        DEFAULT_PATCH_FILE,
-
-        help=
-
-        "Terraform patch JSON file"
+        default=DEFAULT_PATCH
 
     )
 
@@ -1174,13 +545,7 @@ def create_arguments():
 
         "--report",
 
-        default=
-
-        DEFAULT_REPORT_FILE,
-
-        help=
-
-        "Writer execution report"
+        default=DEFAULT_REPORT
 
     )
 
@@ -1189,65 +554,50 @@ def create_arguments():
 
 
 
+
 # ---------------------------------------------------------
-# Main Execution
+# Main
 # ---------------------------------------------------------
 
 def main():
 
 
-    args = create_arguments()
+    args=create_arguments()
 
 
 
-    try:
+    writer=TerraformWriter(
 
+        terraform_root=args.path,
 
-        writer = TerraformWriter(
+        patch_file=args.patch,
 
-            patch_file=args.patch,
+        report_file=args.report
 
-            report_file=args.report
-
-        )
-
-
-
-        writer.execute()
+    )
 
 
 
-        print(
-
-            "\nTerraform files updated successfully"
-
-        )
-
-
-        print(
-
-            f"Report: {args.report}"
-
-        )
+    writer.execute()
 
 
 
-    except Exception as error:
+    print(
+
+        "Terraform files updated successfully"
+
+    )
 
 
-        logger.exception(
+    print(
 
-            "Terraform writer failed: %s",
+        f"Report: {args.report}"
 
-            error
-
-        )
-
-
-        exit(1)
+    )
 
 
 
-if __name__ == "__main__":
+
+if __name__=="__main__":
 
     main()

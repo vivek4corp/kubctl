@@ -140,106 +140,57 @@ class TerraformValidator:
     # -----------------------------------------------------
     # Execute Command
     # -----------------------------------------------------
-
+    
     def run_command(
         self,
-        command: List[str]
-    ) -> Dict[str, Any]:
-
+        command: list
+    ):
+    
         """
-        Execute terraform command safely.
+        Execute shell command.
         """
-
-
-        logger.info(
-
-            "Running: %s",
-
-            " ".join(command)
-
+    
+        process = subprocess.run(
+    
+            command,
+    
+            cwd=self.path,
+    
+            capture_output=True,
+    
+            text=True
+    
         )
-
-
-        try:
-
-
-            result = subprocess.run(
-
-                command,
-
-                cwd=self.terraform_path,
-
-                capture_output=True,
-
-                text=True
-
-            )
-
-
-
-            return {
-
-
-                "command":
-
-                    " ".join(command),
-
-
-                "return_code":
-
-                    result.returncode,
-
-
-                "stdout":
-
-                    result.stdout,
-
-
-                "stderr":
-
-                    result.stderr,
-
-
-                "success":
-
-                    result.returncode == 0
-
-            }
-
-
-
-        except Exception as error:
-
-
-            return {
-
-
-                "command":
-
-                    " ".join(command),
-
-
-                "return_code":
-
-                    -1,
-
-
-                "stdout":
-
-                    "",
-
-
-                "stderr":
-
-                    str(error),
-
-
-                "success":
-
-                    False
-
-            }
-
+    
+    
+        return {
+    
+    
+            "command":
+    
+                " ".join(command),
+    
+    
+            "success":
+    
+                process.returncode == 0,
+    
+    
+            "return_code":
+    
+                process.returncode,
+    
+    
+            "stdout":
+    
+                process.stdout,
+    
+    
+            "stderr":
+    
+                process.stderr
+    
+        }
     # -----------------------------------------------------
     # Add Check Result
     # -----------------------------------------------------

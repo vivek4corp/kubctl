@@ -1,0 +1,119 @@
+name: Terraform Drift Detection
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 02:00 UTC. Change this to match the required review cadence.
+    - cron: "0 2 * * *"
+
+# This workflow never runs `terraform apply`. Its only write operation is
+# creating/updating a pull request that contains the drift review document.
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+env:
+  TF_WORKING_DIR: ./environments/dev
+
+jobs:
+  drift:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init -input=false
+
+      - name: Detect drift
+        id: plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        shell: bash
+        run: |
+          set +e
+          terraform plan -out=tfplan -detailed-exitcode -input=false
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -eq 1 ]; then
+            echo "Terraform plan failed" >&2
+            exit 1
+          fi
+          echo "has_drift=$([ "$exit_code" -eq 2 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          terraform show -json tfplan > tfplan.json
+          terraform show -json > tfstate.json
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
+
+      - name: Generate pull request review
+        if: steps.plan.outputs.has_drift == 'true'
+        run: |
+          mkdir -p reports
+          python scripts/drift.py
+          python scripts/drift_review.py --drift reports/drift.json --output drift-reviews/dev.md
+
+      - name: Generate optional diagnostics
+        if: steps.plan.outputs.has_drift == 'true'
+        continue-on-error: true
+        run: |
+          python scripts/activitylog.py
+          python scripts/report.py
+          python scripts/ai.py
+        env:
+          MODELS_PAT: ${{ secrets.MODELS_PAT }}
+
+      - name: Create or update drift review pull request
+        if: steps.plan.outputs.has_drift == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "docs: record Terraform drift for review"
+          branch: terraform-drift-review
+          delete-branch: true
+          title: "Terraform drift review (dev)"
+          body: |
+            Terraform detected infrastructure drift in the `dev` environment.
+
+            This PR intentionally does **not** run `terraform apply` or modify Terraform configuration automatically. Review `drift-reviews/dev.md`, make any required `.tf` changes in this PR, and merge only after the normal Terraform plan checks pass. The existing main-branch apply workflow remains the only place that applies approved configuration.
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-drift-diagnostics
+          path: |
+            reports/
+            ${{ env.TF_WORKING_DIR }}/tfplan
+            ${{ env.TF_WORKING_DIR }}/tfplan.json
+            ${{ env.TF_WORKING_DIR }}/tfstate.json
+          if-no-files-found: warn
+
+      - name: Publish summary
+        if: always()
+        shell: bash
+        run: |
+          echo "# Terraform Drift Detection" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.plan.outputs.has_drift }}" = "true" ]; then
+            echo "Drift detected. A pull request was created or updated for human review; no Terraform apply was run." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "No drift detected." >> "$GITHUB_STEP_SUMMARY"
+          fi

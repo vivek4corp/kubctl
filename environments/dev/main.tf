@@ -11,7 +11,6 @@ module "storage_accounts" {
       location                 = var.infra_config.resource_groups[v.rg_key].location
       account_tier             = v.account_tier
       account_replication_type = v.account_replication_type
-      kind                     = v.kind
       tags                     = v.tags
     }
   }

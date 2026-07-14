@@ -1,63 +1,415 @@
+"""
+drift.py
+
+Enterprise Terraform Drift Detection Engine
+
+Input:
+- terraform show -json tfplan.json
+
+Output:
+- reports/drift.json
+
+Features:
+- Detect create/update/delete/replace
+- Risk classification
+- Change generator compatible output
+"""
+
+
 import json
 import os
+
 from pathlib import Path
+from datetime import datetime, timezone
 
-# Create reports directory
-os.makedirs("reports", exist_ok=True)
 
-# Terraform plan JSON location
-PLAN_FILE = Path("environments/dev/tfplan.json")
+
+# --------------------------------------------------
+# Paths
+# --------------------------------------------------
+
+REPORT_DIR = Path("reports")
+
+REPORT_DIR.mkdir(
+    exist_ok=True
+)
+
+
+PLAN_FILE = Path(
+    "environments/dev/tfplan.json"
+)
+
+
+OUTPUT_FILE = Path(
+    "reports/drift.json"
+)
+
+
+
+# --------------------------------------------------
+# Validate Plan
+# --------------------------------------------------
 
 if not PLAN_FILE.exists():
-    raise FileNotFoundError(f"{PLAN_FILE} not found")
 
-with PLAN_FILE.open("r") as f:
-    plan = json.load(f)
+    raise FileNotFoundError(
+        f"{PLAN_FILE} not found"
+    )
 
-drift_report = []
 
-for resource in plan.get("resource_changes", []):
 
-    actions = resource["change"]["actions"]
+# --------------------------------------------------
+# Load Terraform Plan
+# --------------------------------------------------
 
-    # Ignore resources with no changes
+with PLAN_FILE.open(
+    "r",
+    encoding="utf-8"
+) as file:
+
+    plan = json.load(file)
+
+
+
+# --------------------------------------------------
+# Risk Engine
+# --------------------------------------------------
+
+def calculate_risk(actions):
+
+
+    if "delete" in actions and "create" in actions:
+
+        return "HIGH"
+
+
+    if "replace" in actions:
+
+        return "HIGH"
+
+
+    if "delete" in actions:
+
+        return "HIGH"
+
+
+    if "update" in actions:
+
+        return "MEDIUM"
+
+
+    if "create" in actions:
+
+        return "LOW"
+
+
+    return "LOW"
+
+
+
+
+
+# --------------------------------------------------
+# Drift Detection
+# --------------------------------------------------
+
+resources = []
+
+
+for resource in plan.get(
+    "resource_changes",
+    []
+):
+
+
+    actions = resource.get(
+        "change",
+        {}
+    ).get(
+        "actions",
+        []
+    )
+
+
     if actions == ["no-op"]:
+
         continue
 
-    before = resource["change"].get("before")
-    after = resource["change"].get("after")
 
-    drift = {
-        "resource": resource["address"],
-        "type": resource["type"],
-        "name": resource["name"],
-        "provider": resource.get("provider_name", ""),
-        "actions": actions,
-        "before": before,
-        "after": after,
-        "changed_by": "",
-        "time": "",
-        "risk": "",
-        "recommendation": ""
+
+    if not actions:
+
+        continue
+
+
+
+    action_string = ",".join(
+        actions
+    )
+
+
+
+    item = {
+
+
+        "resource":
+
+            resource.get(
+                "address"
+            ),
+
+
+
+        "type":
+
+            resource.get(
+                "type"
+            ),
+
+
+
+        "name":
+
+            resource.get(
+                "name"
+            ),
+
+
+
+        "provider":
+
+            resource.get(
+                "provider_name",
+                ""
+            ),
+
+
+
+        #
+        # Used by change_generator
+        #
+
+        "action":
+
+            action_string,
+
+
+
+        "actions":
+
+            actions,
+
+
+
+        "before":
+
+            resource.get(
+                "change",
+                {}
+            ).get(
+                "before"
+            ),
+
+
+
+        "after":
+
+            resource.get(
+                "change",
+                {}
+            ).get(
+                "after"
+            ),
+
+
+
+        "risk":
+
+            calculate_risk(
+                actions
+            ),
+
+
+
+        "changed_by":
+
+            "",
+
+
+
+        "time":
+
+            "",
+
+
+
+        "recommendation":
+
+            ""
+
     }
 
-    drift_report.append(drift)
 
-# Save JSON report
-with open("reports/drift.json", "w") as outfile:
-    json.dump(drift_report, outfile, indent=4)
+
+    resources.append(
+        item
+    )
+
+
+
+
+
+# --------------------------------------------------
+# Final Report
+# --------------------------------------------------
+
+report = {
+
+
+    "metadata": {
+
+
+        "generated_at":
+
+            datetime.now(
+                timezone.utc
+            ).isoformat(),
+
+
+        "engine":
+
+            "terraform_drift_detector",
+
+
+        "version":
+
+            "2.0.0"
+
+    },
+
+
+    "summary": {
+
+
+        "total_changes":
+
+            len(resources),
+
+
+        "high_risk":
+
+            len(
+                [
+                    r for r in resources
+                    if r["risk"] == "HIGH"
+                ]
+            ),
+
+
+        "medium_risk":
+
+            len(
+                [
+                    r for r in resources
+                    if r["risk"] == "MEDIUM"
+                ]
+            ),
+
+
+        "low_risk":
+
+            len(
+                [
+                    r for r in resources
+                    if r["risk"] == "LOW"
+                ]
+            )
+
+    },
+
+
+    "resources":
+
+        resources
+
+}
+
+
+
+
+
+# --------------------------------------------------
+# Save
+# --------------------------------------------------
+
+with OUTPUT_FILE.open(
+    "w",
+    encoding="utf-8"
+) as outfile:
+
+
+    json.dump(
+        report,
+        outfile,
+        indent=4
+    )
+
+
+
+
+
+# --------------------------------------------------
+# Console
+# --------------------------------------------------
 
 print("=" * 70)
 
-if not drift_report:
-    print("✅ No drift detected.")
+
+if not resources:
+
+
+    print(
+        "✅ No drift detected."
+    )
+
+
 else:
-    print(f"✅ Drift detected in {len(drift_report)} resource(s)\n")
 
-    for item in drift_report:
-        print(f"Resource : {item['resource']}")
-        print(f"Type     : {item['type']}")
-        print(f"Action   : {', '.join(item['actions'])}")
-        print("-" * 70)
 
-print("\nDrift report written to reports/drift.json")
+    print(
+        f"✅ Drift detected in {len(resources)} resource(s)\n"
+    )
+
+
+    for item in resources:
+
+
+        print(
+            f"Resource : {item['resource']}"
+        )
+
+
+        print(
+            f"Type     : {item['type']}"
+        )
+
+
+        print(
+            f"Action   : {item['action']}"
+        )
+
+
+        print(
+            f"Risk     : {item['risk']}"
+        )
+
+
+        print(
+            "-" * 70
+        )
+
+
+
+print(
+    "\nDrift report written to reports/drift.json"
+)

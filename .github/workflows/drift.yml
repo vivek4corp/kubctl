@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set +e
-          terraform plan -out=tfplan -detailed-exitcode -input=false
+          terraform plan -out=tfplan -detailed-exitcode -input=false > terraform-initial-plan.log 2>&1
           exit_code=$?
           set -e
           if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 2 ]; then
@@ -88,6 +88,28 @@ jobs:
         env:
           MODELS_PAT: ${{ secrets.MODELS_PAT }}
 
+      - name: Plan AI-proposed Terraform changes
+        if: steps.plan.outputs.has_drift == 'true'
+        id: remediation_plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        shell: bash
+        run: |
+          set +e
+          terraform plan -out=ai-remediation.tfplan -detailed-exitcode -input=false > terraform-ai-remediation-plan.log 2>&1
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -ne 0 ] && [ "$exit_code" -ne 2 ]; then
+            echo "Plan for the AI-proposed code failed" >&2
+            exit 1
+          fi
+          if [ "$exit_code" -eq 0 ]; then
+            echo "result=no-changes" >> "$GITHUB_OUTPUT"
+            echo "AI proposal matches the current infrastructure."
+          else
+            echo "result=changes-remain" >> "$GITHUB_OUTPUT"
+            echo "AI proposal is valid but Terraform still has changes; review the secure plan log."
+          fi
+
       - name: Generate optional diagnostics
         if: steps.plan.outputs.has_drift == 'true'
         continue-on-error: true
@@ -110,7 +132,7 @@ jobs:
           body: |
             Terraform detected infrastructure drift in the `dev` environment.
 
-            This PR contains only the AI-proposed Terraform source changes. Drift reports, plan/state JSON, AI responses, and diagnostics remain on the runner and are not committed or uploaded. No `terraform apply` is run.
+            This PR contains only the AI-proposed Terraform source changes. The workflow ran `terraform validate` and a post-remediation `terraform plan` before opening this PR (result: `${{ steps.remediation_plan.outputs.result }}`). Drift reports, plan/state JSON, AI responses, and diagnostics remain on the runner and are not committed or uploaded. No `terraform apply` is run.
           # Restrict the commit to Terraform source files. Reports and plan/state
           # output can contain sensitive values and must never reach the PR.
           add-paths: |

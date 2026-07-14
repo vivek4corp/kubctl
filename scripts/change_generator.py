@@ -4,31 +4,28 @@ change_generator.py
 Enterprise Terraform Change Request Generator
 
 Responsibilities:
-- Convert drift findings into Terraform change requests
-- Prepare input for terraform_modifier.py
-- Keep resource handling generic
+- Convert Terraform drift into remediation requests
+- Separate safe and destructive changes
+- Generate automation input
+- Generate manual approval requests
 
-Flow:
-
-drift.json
-    |
-    v
-change_requests.json
-    |
-    v
-terraform_modifier.py
-
+Safety Model:
+- create  -> allowed
+- update  -> allowed
+- delete  -> blocked
+- replace -> blocked
 """
 
 
+import os
 import json
 import argparse
 import logging
 
 
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any
+from datetime import datetime, timezone
+from typing import Dict, Any, List
 
 
 
@@ -46,9 +43,7 @@ logging.basicConfig(
 
 
 logger = logging.getLogger(
-
     "change-generator"
-
 )
 
 
@@ -57,17 +52,20 @@ logger = logging.getLogger(
 # Defaults
 # ---------------------------------------------------------
 
-DEFAULT_INPUT = (
-
+DEFAULT_DRIFT = (
     "reports/drift.json"
-
 )
 
-
-DEFAULT_OUTPUT = (
-
+DEFAULT_CHANGE_REQUEST = (
     "reports/change_requests.json"
+)
 
+DEFAULT_REPORT = (
+    "reports/change_requests_report.json"
+)
+
+DEFAULT_MANUAL_REVIEW = (
+    "reports/manual_review.json"
 )
 
 
@@ -81,39 +79,50 @@ class ChangeGenerator:
 
     def __init__(
         self,
-        drift_file: str,
-        output_file: str
+        drift_file: str = DEFAULT_DRIFT,
+        output_file: str = DEFAULT_CHANGE_REQUEST,
+        report_file: str = DEFAULT_REPORT,
+        manual_review_file: str = DEFAULT_MANUAL_REVIEW
     ):
 
 
         self.drift_file = Path(
-
             drift_file
-
         )
 
 
         self.output_file = Path(
-
             output_file
-
         )
 
 
-        self.changes = []
+        self.report_file = Path(
+            report_file
+        )
 
+
+        self.manual_review_file = Path(
+            manual_review_file
+        )
+
+
+        self.safe_changes = []
+
+
+        self.blocked_changes = []
 
 
         self.report = {
 
 
-            "metadata":
+            "metadata": {
 
-            {
 
                 "generated_at":
 
-                    datetime.utcnow().isoformat(),
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat(),
 
 
                 "engine":
@@ -128,14 +137,19 @@ class ChangeGenerator:
             },
 
 
-            "total_changes":
-
-                0,
+            "summary": {
 
 
-            "changes":
+                "safe_changes":
 
-                []
+                    0,
+
+
+                "manual_review":
+
+                    0
+
+            }
 
         }
 
@@ -148,21 +162,17 @@ class ChangeGenerator:
     def load_json(
         self,
         file_path: Path
-    ) -> Any:
-
-        """
-        Generic JSON loader.
-        """
+    ) -> Dict[str, Any]:
 
 
         if not file_path.exists():
 
-            raise FileNotFoundError(
-
-                f"File not found: {file_path}"
-
+            logger.warning(
+                "File not found: %s",
+                file_path
             )
 
+            return {}
 
 
         with open(
@@ -175,79 +185,49 @@ class ChangeGenerator:
 
         ) as file:
 
+            return json.load(file)
 
-            return json.load(
 
-                file
 
-            )
     # -----------------------------------------------------
-    # Normalize Drift Data
+    # Normalize Action
     # -----------------------------------------------------
 
-    def normalize_drift(
+    def normalize_action(
         self,
-        drift_data: Any
-    ) -> List[Dict[str, Any]]:
+        action
+    ) -> List[str]:
 
         """
-        Normalize different drift report formats.
+        Terraform actions can be:
 
-        Supports:
-
-        [
-          {...}
-        ]
+        ["update"]
 
         or
 
-        {
-          "resources":[...]
-        }
-
+        "delete,create"
         """
 
-
         if isinstance(
-
-            drift_data,
-
+            action,
             list
-
         ):
 
-            return drift_data
-
+            return action
 
 
         if isinstance(
-
-            drift_data,
-
-            dict
-
+            action,
+            str
         ):
 
+            return [
 
-            if "resources" in drift_data:
+                item.strip()
 
+                for item in action.split(",")
 
-                return drift_data["resources"]
-
-
-
-            if "changes" in drift_data:
-
-
-                return drift_data["changes"]
-
-
-
-        logger.warning(
-
-            "Unknown drift format"
-
-        )
+            ]
 
 
         return []
@@ -255,331 +235,134 @@ class ChangeGenerator:
 
 
     # -----------------------------------------------------
-    # Extract Terraform Address
+    # Analyze Drift
     # -----------------------------------------------------
 
-    def extract_address(
-        self,
-        item: Dict[str, Any]
-    ) -> str:
+    def analyze_drift(self):
 
-        """
-        Extract terraform resource address.
 
-        Supports generic keys.
-        """
-
-
-        possible_keys = [
-
-
-            "terraform_address",
-
-
-            "resource_address",
-
-
-            "address",
-
-
-            "resource",
-
-
-            "id"
-
-        ]
-
-
-
-        for key in possible_keys:
-
-
-            if item.get(key):
-
-
-                return item[key]
-
-
-
-        return ""
-
-
-
-    # -----------------------------------------------------
-    # Extract Changes
-    # -----------------------------------------------------
-
-    def extract_changes(
-        self,
-        item: Dict[str, Any]
-    ) -> Dict[str, Any]:
-
-        """
-        Extract attribute differences.
-        """
-
-
-        possible_keys = [
-
-
-            "changes",
-
-
-            "diff",
-
-
-            "attributes",
-
-
-            "difference"
-
-        ]
-
-
-
-        for key in possible_keys:
-
-
-            value = item.get(
-
-                key
-
-            )
-
-
-            if isinstance(
-
-                value,
-
-                dict
-
-            ):
-
-
-                return value
-
-
-
-        return {}
-
-
-
-    # -----------------------------------------------------
-    # Convert Drift To Terraform Change
-    # -----------------------------------------------------
-
-    def convert_change(
-        self,
-        resource: Dict[str, Any]
-    ) -> Dict[str, Any]:
-
-        """
-        Convert one drift item into
-        terraform_modifier input format.
-        """
-
-
-        address = self.extract_address(
-
-            resource
-
-        )
-
-
-
-        changes = self.extract_changes(
-
-            resource
-
-        )
-
-
-
-        if not address or not changes:
-
-
-            return {}
-
-
-
-        terraform_changes = {}
-
-
-
-        for attribute, value in changes.items():
-
-
-            # Existing drift format
-
-            if isinstance(
-
-                value,
-
-                dict
-
-            ) and "expected" in value:
-
-
-                terraform_changes[attribute] = {
-
-
-                    "after":
-
-                        value["expected"]
-
-                }
-
-
-
-            elif isinstance(
-
-                value,
-
-                dict
-
-            ) and "desired" in value:
-
-
-                terraform_changes[attribute] = {
-
-
-                    "after":
-
-                        value["desired"]
-
-                }
-
-
-
-            else:
-
-
-                terraform_changes[attribute] = {
-
-
-                    "after":
-
-                        value
-
-                }
-
-
-
-        return {
-
-
-            "terraform_address":
-
-                address,
-
-
-            "changes":
-
-                terraform_changes
-
-        }
-    # -----------------------------------------------------
-    # Remove Duplicate Changes
-    # -----------------------------------------------------
-
-    def remove_duplicates(
-        self,
-        changes: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-
-        """
-        Remove duplicate terraform changes.
-        """
-
-
-        unique = {}
-
-
-
-        for item in changes:
-
-
-            address = item.get(
-
-                "terraform_address"
-
-            )
-
-
-            if not address:
-
-                continue
-
-
-
-            key = json.dumps(
-
-                item,
-
-                sort_keys=True
-
-            )
-
-
-
-            unique[key] = item
-
-
-
-        return list(
-
-            unique.values()
-
-        )
-
-
-
-    # -----------------------------------------------------
-    # Generate Change Requests
-    # -----------------------------------------------------
-
-    def generate_requests(self):
-
-        """
-        Convert drift into terraform requests.
-        """
-
-
-        drift_data = self.load_json(
+        drift = self.load_json(
 
             self.drift_file
 
         )
 
 
+        resources = drift.get(
 
-        resources = self.normalize_drift(
+            "resources",
 
-            drift_data
+            []
 
         )
-
-
-
-        generated = []
 
 
 
         for resource in resources:
 
 
-            change = self.convert_change(
+            actions = self.normalize_action(
 
-                resource
+                resource.get(
+                    "action"
+                )
 
             )
 
 
 
-            if change:
+            change = {
 
 
-                generated.append(
+                "resource":
+
+                    resource.get(
+                        "resource"
+                    ),
+
+
+                "type":
+
+                    resource.get(
+                        "type"
+                    ),
+
+
+                "actions":
+
+                    actions,
+
+
+                "source":
+
+                    "terraform_drift"
+
+            }
+
+
+
+            if (
+
+                "delete" in actions
+
+                or
+
+                "replace" in actions
+
+                or
+
+                (
+                    "delete" in actions
+                    and
+                    "create" in actions
+                )
+
+            ):
+
+
+                self.blocked_changes.append(
+
+                    {
+
+
+                        **change,
+
+
+                        "risk":
+
+                            "HIGH",
+
+
+                        "status":
+
+                            "MANUAL_APPROVAL_REQUIRED",
+
+
+                        "reason":
+
+                            "Destructive Terraform operation detected"
+
+                    }
+
+                )
+
+
+                continue
+
+
+
+            if (
+
+                "create" in actions
+
+                or
+
+                "update" in actions
+
+            ):
+
+
+                self.safe_changes.append(
 
                     change
 
@@ -587,97 +370,11 @@ class ChangeGenerator:
 
 
 
-        generated = self.remove_duplicates(
-
-            generated
-
-        )
-
-
-
-        self.changes = generated
-
-
-
-        self.report["total_changes"] = len(
-
-            generated
-
-        )
-
-
-
-        self.report["changes"] = generated
-
-
-
-        return generated
-
-
-
     # -----------------------------------------------------
-    # Change Summary
+    # Save Change Requests
     # -----------------------------------------------------
 
-    def generate_summary(self):
-
-        """
-        Create execution summary.
-        """
-
-
-        summary = {
-
-
-            "total":
-
-                len(
-
-                    self.changes
-
-                ),
-
-
-            "resources":
-
-                []
-
-        }
-
-
-
-        for item in self.changes:
-
-
-            summary["resources"].append(
-
-                item.get(
-
-                    "terraform_address"
-
-                )
-
-            )
-
-
-
-        self.report["summary"] = summary
-
-
-
-        return summary
-
-
-
-    # -----------------------------------------------------
-    # Save Output
-    # -----------------------------------------------------
-
-    def save_output(self):
-
-        """
-        Save change request JSON.
-        """
+    def save_changes(self):
 
 
         self.output_file.parent.mkdir(
@@ -687,7 +384,6 @@ class ChangeGenerator:
             exist_ok=True
 
         )
-
 
 
         with open(
@@ -703,7 +399,15 @@ class ChangeGenerator:
 
             json.dump(
 
-                self.changes,
+                {
+
+
+                    "changes":
+
+                        self.safe_changes
+
+
+                },
 
                 file,
 
@@ -713,41 +417,87 @@ class ChangeGenerator:
 
 
 
-        logger.info(
-
-            "Change request generated: %s",
-
-            self.output_file
-
-        )
     # -----------------------------------------------------
-    # Save Execution Report
+    # Save Manual Review
     # -----------------------------------------------------
 
-    def save_report(self):
-
-        """
-        Save generator execution report.
-        """
+    def save_manual_review(self):
 
 
-        report_file = Path(
+        self.manual_review_file.parent.mkdir(
 
-            str(self.output_file).replace(
+            parents=True,
 
-                ".json",
-
-                "_report.json"
-
-            )
+            exist_ok=True
 
         )
-
 
 
         with open(
 
-            report_file,
+            self.manual_review_file,
+
+            "w",
+
+            encoding="utf-8"
+
+        ) as file:
+
+
+            json.dump(
+
+                {
+
+
+                    "manual_review":
+
+                        self.blocked_changes
+
+
+                },
+
+                file,
+
+                indent=4
+
+            )
+
+
+
+    # -----------------------------------------------------
+    # Save Report
+    # -----------------------------------------------------
+
+    def save_report(self):
+
+
+        self.report["summary"]["safe_changes"] = len(
+
+            self.safe_changes
+
+        )
+
+
+        self.report["summary"]["manual_review"] = len(
+
+            self.blocked_changes
+
+        )
+
+
+
+        self.report_file.parent.mkdir(
+
+            parents=True,
+
+            exist_ok=True
+
+        )
+
+
+        with open(
+
+            self.report_file,
 
             "w",
 
@@ -768,66 +518,62 @@ class ChangeGenerator:
 
 
 
-        logger.info(
-
-            "Generator report created: %s",
-
-            report_file
-
-        )
-
-
-
     # -----------------------------------------------------
-    # Execute Generator
+    # Execute
     # -----------------------------------------------------
 
     def execute(self):
 
-        """
-        Complete workflow.
-        """
-
 
         logger.info(
-
             "Starting Terraform Change Generator"
-
         )
 
 
-
-        self.generate_requests()
-
+        self.analyze_drift()
 
 
-        self.generate_summary()
+        self.save_changes()
 
 
-
-        self.save_output()
-
+        self.save_manual_review()
 
 
         self.save_report()
 
 
 
-        return self.report
+        logger.info(
+            "Change requests generated: %s",
+            len(self.safe_changes)
+        )
+
+
+        logger.info(
+            "Manual review required: %s",
+            len(self.blocked_changes)
+        )
+
+
+
+        return self.safe_changes
+
+
 
 
 
 # ---------------------------------------------------------
-# CLI Arguments
+# CLI
 # ---------------------------------------------------------
 
 def create_arguments():
+
 
     parser = argparse.ArgumentParser(
 
         description=
 
-        "Enterprise Terraform Change Request Generator"
+        "Enterprise Terraform Change Generator"
 
     )
 
@@ -836,11 +582,7 @@ def create_arguments():
 
         "--drift",
 
-        default=DEFAULT_INPUT,
-
-        help=
-
-        "Drift JSON input file"
+        default=DEFAULT_DRIFT
 
     )
 
@@ -849,11 +591,16 @@ def create_arguments():
 
         "--output",
 
-        default=DEFAULT_OUTPUT,
+        default=DEFAULT_CHANGE_REQUEST
 
-        help=
+    )
 
-        "Change request output file"
+
+    parser.add_argument(
+
+        "--report",
+
+        default=DEFAULT_REPORT
 
     )
 
@@ -862,8 +609,9 @@ def create_arguments():
 
 
 
+
 # ---------------------------------------------------------
-# Main Execution
+# Main
 # ---------------------------------------------------------
 
 def main():
@@ -873,58 +621,37 @@ def main():
 
 
 
-    try:
+    generator = ChangeGenerator(
 
+        drift_file=args.drift,
 
-        generator = ChangeGenerator(
+        output_file=args.output,
 
-            drift_file=args.drift,
+        report_file=args.report
 
-            output_file=args.output
-
-        )
-
-
-
-        result = generator.execute()
+    )
 
 
 
-        print(
-
-            "Terraform change request generation completed"
-
-        )
-
-
-        print(
-
-            f"Total changes: {result['total_changes']}"
-
-        )
-
-
-        print(
-
-            f"Output: {args.output}"
-
-        )
+    changes = generator.execute()
 
 
 
-    except Exception as error:
+    print(
+        "Terraform change request generation completed"
+    )
 
 
-        logger.exception(
-
-            "Change generation failed: %s",
-
-            error
-
-        )
+    print(
+        f"Total safe changes: {len(changes)}"
+    )
 
 
-        exit(1)
+    print(
+        f"Output: {args.output}"
+    )
+
+
 
 
 

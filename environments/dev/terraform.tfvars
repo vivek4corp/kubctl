@@ -7,10 +7,10 @@ infra_config = {
   }
   storage_accounts = {
     "stgmicrodev123" = {
-      rg_key                  = "rg-micro-dev"
-      account_tier            = "Standard"
+      rg_key                   = "rg-micro-dev"
+      account_tier             = "Standard"
       account_replication_type = "ZRS"
-      tags                    = { Environment = "Dev", ManagedBy = "Terraform" }
+      tags                     = { Environment = "Dev", ManagedBy = "Terraform" }
     }
   }
 }

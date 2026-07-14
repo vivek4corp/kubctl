@@ -1,12 +1,20 @@
 import json
 import os
-import re
+import shutil
 
-CHANGE_FILE = "reports/change_request.json"
+CHANGE_FILE = "reports/terraform_changes.json"
+
+
+def backup(file):
+
+    backup_file = file + ".bak"
+
+    if not os.path.exists(backup_file):
+
+        shutil.copy(file, backup_file)
 
 
 def tf_value(value):
-    """Convert Python value to Terraform syntax."""
 
     if value is None:
         return "null"
@@ -20,84 +28,98 @@ def tf_value(value):
     if isinstance(value, str):
         return f'"{value}"'
 
-    return json.dumps(value)
+    if isinstance(value, list):
+        return json.dumps(value)
+
+    if isinstance(value, dict):
+        return json.dumps(value)
+
+    return str(value)
 
 
-def update_resource(tf_file, resource_type, resource_name, changes):
+def update_attribute(lines, key, value):
 
-    if not os.path.exists(tf_file):
-        print(f"File not found : {tf_file}")
+    for index, line in enumerate(lines):
+
+        stripped = line.strip()
+
+        if stripped.startswith(key + " ="):
+
+            indent = line[:len(line) - len(line.lstrip())]
+
+            lines[index] = f"{indent}{key} = {tf_value(value)}\n"
+
+            return True
+
+    return False
+
+
+def process(change):
+
+    file = change["file"]
+
+    if not os.path.exists(file):
+
+        print(f"Missing: {file}")
+
         return
 
-    with open(tf_file, "r", encoding="utf-8") as f:
-        content = f.read()
+    backup(file)
 
-    pattern = (
-        rf'(resource\s+"{re.escape(resource_type)}"\s+"{re.escape(resource_name)}"\s*\{{'
-        rf'[\s\S]*?\n\}})'
-    )
+    with open(file, encoding="utf-8") as f:
 
-    match = re.search(pattern, content)
+        lines = f.readlines()
 
-    if not match:
-        print(f"Resource not found : {resource_type}.{resource_name}")
-        return
+    changed = False
 
-    block = match.group(1)
+    for key, value in change["attributes"].items():
 
-    for key, value in changes.items():
-
-        # Skip nested objects/lists for now
         if isinstance(value, (dict, list)):
             continue
 
-        attr_pattern = rf'(^\s*{re.escape(key)}\s*=\s*).*$'
+        if update_attribute(lines, key, value):
 
-        if re.search(attr_pattern, block, flags=re.MULTILINE):
+            print(f"Updated {key}")
 
-            block = re.sub(
-                attr_pattern,
-                rf'\1{tf_value(value)}',
-                block,
-                flags=re.MULTILINE
-            )
+            changed = True
 
-    content = content.replace(match.group(1), block)
+    if changed:
 
-    with open(tf_file, "w", encoding="utf-8") as f:
-        f.write(content)
+        with open(file, "w", encoding="utf-8") as f:
 
-    print(f"Updated : {tf_file}")
+            f.writelines(lines)
+
+        print(f"Saved {file}")
+
+    else:
+
+        print(f"No changes required in {file}")
 
 
 def main():
 
     if not os.path.exists(CHANGE_FILE):
-        print("No change_request.json found.")
+
+        print("terraform_changes.json not found")
+
         return
 
-    with open(CHANGE_FILE, "r", encoding="utf-8") as f:
-        requests = json.load(f)
+    with open(CHANGE_FILE, encoding="utf-8") as f:
 
-    if len(requests) == 0:
-        print("No Terraform changes required.")
-        return
+        changes = json.load(f)
 
-    print("=" * 80)
+    print("=" * 70)
     print("Terraform Writer")
-    print("=" * 80)
+    print("=" * 70)
 
-    for item in requests:
+    for change in changes:
 
-        update_resource(
-            tf_file=item["file"],
-            resource_type=item["resource_type"],
-            resource_name=item["resource_name"],
-            changes=item["changes"]
-        )
+        process(change)
 
-    print("\nTerraform files updated successfully.")
+    print()
+    print("Terraform update completed.")
 
 
 if __name__ == "__main__":
+
     main()

@@ -125,18 +125,17 @@ jobs:
         id: commit_changes
         shell: bash
         run: |
-          mapfile -t changed_files < <(git diff --name-only -- "${{ env.TF_WORKING_DIR }}")
+          terraform_dir="${{ env.TF_WORKING_DIR }}"
+          terraform_dir="${terraform_dir#./}"
+          mapfile -t changed_files < <(git diff --name-only -- "$terraform_dir")
           safe_files=()
           for file in "${changed_files[@]}"; do
-            case "$file" in
-              ${{ env.TF_WORKING_DIR }}/*.tf|${{ env.TF_WORKING_DIR }}/*.tfvars)
-                safe_files+=("$file")
-                ;;
-              *)
-                echo "Refusing to commit non-Terraform output: $file" >&2
-                exit 1
-                ;;
-            esac
+            if [[ "$file" == "$terraform_dir/"*.tf || "$file" == "$terraform_dir/"*.tfvars ]]; then
+              safe_files+=("$file")
+            else
+              echo "Refusing to commit non-Terraform output: $file" >&2
+              exit 1
+            fi
           done
 
           if [ "${#safe_files[@]}" -eq 0 ]; then

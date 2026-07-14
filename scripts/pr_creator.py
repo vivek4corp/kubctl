@@ -951,6 +951,17 @@ def create_arguments():
     )
 
 
+    parser.add_argument(
+
+        "--allow-pr-create",
+
+        action="store_true",
+
+        help="Explicitly allow this legacy script to create or update a GitHub pull request"
+
+    )
+
+
     return parser.parse_args()
 
 
@@ -963,6 +974,15 @@ def main():
 
 
     args = create_arguments()
+
+
+    if not args.allow_pr_create:
+
+        raise PermissionError(
+
+            "PR creation is disabled by default. Pass --allow-pr-create to opt in."
+
+        )
 
 
 

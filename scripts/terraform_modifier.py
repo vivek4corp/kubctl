@@ -1,31 +1,29 @@
 """
 terraform_modifier.py
 
-Enterprise Terraform Generic Modification Engine
+Enterprise Terraform Patch Generator
 
 Responsibilities:
-- Read Terraform resource inventory
-- Compare resource changes
-- Generate modification plans
-- Create generic patch instructions
+- Convert approved change requests into Terraform patch plan
+- Validate remediation safety
+- Generate terraform_patch.json
 
-This file does NOT:
-- modify terraform files directly
-- know cloud providers
-- know resource types
-- know module structures
-
-Writing is handled by terraform_writer.py
+Safety:
+- update  -> allowed
+- create  -> allowed
+- delete  -> blocked
+- replace -> blocked
 """
 
 
-import os
 import json
 import argparse
 import logging
+
+
 from pathlib import Path
-from datetime import datetime
-from typing import Dict, List, Any
+from datetime import datetime, timezone
+from typing import Dict, Any, List
 
 
 
@@ -37,8 +35,7 @@ logging.basicConfig(
 
     level=logging.INFO,
 
-    format=
-    "%(asctime)s | %(levelname)s | %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s"
 
 )
 
@@ -53,40 +50,42 @@ logger = logging.getLogger(
 # Defaults
 # ---------------------------------------------------------
 
-DEFAULT_RESOURCE_FILE = (
+DEFAULT_CHANGE_FILE = (
+    "reports/change_requests.json"
+)
+
+DEFAULT_INVENTORY = (
     "reports/terraform_resources.json"
 )
 
-
-DEFAULT_PATCH_FILE = (
+DEFAULT_PATCH = (
     "reports/terraform_patch.json"
 )
 
 
 
 # ---------------------------------------------------------
-# Terraform Modifier Engine
+# Modifier Engine
 # ---------------------------------------------------------
 
 class TerraformModifier:
-    """
-    Generic Terraform modification planner.
-
-    Responsible for creating
-    change instructions only.
-    """
-
 
 
     def __init__(
         self,
-        resource_file: str,
-        patch_file: str = DEFAULT_PATCH_FILE
+        change_file: str = DEFAULT_CHANGE_FILE,
+        inventory_file: str = DEFAULT_INVENTORY,
+        patch_file: str = DEFAULT_PATCH
     ):
 
 
-        self.resource_file = Path(
-            resource_file
+        self.change_file = Path(
+            change_file
+        )
+
+
+        self.inventory_file = Path(
+            inventory_file
         )
 
 
@@ -95,76 +94,62 @@ class TerraformModifier:
         )
 
 
-        self.resources = {}
+        self.patch = {
 
 
-        self.patch_plan = {
+            "metadata": {
 
-
-            "metadata":
-            {
 
                 "generated_at":
-                    datetime.utcnow().isoformat(),
+
+                    datetime.now(
+                        timezone.utc
+                    ).isoformat(),
 
 
                 "engine":
+
                     "terraform_modifier",
 
 
                 "version":
+
                     "1.0.0"
 
             },
 
 
-            "changes": [],
-
-
-            "summary":
-            {
-
-                "create": 0,
-
-                "update": 0,
-
-                "delete": 0,
-
-                "replace": 0
-
-            }
+            "changes":[]
 
         }
 
 
 
+
     # -----------------------------------------------------
-    # Load Terraform Inventory
+    # Load JSON
     # -----------------------------------------------------
 
-    def load_resources(self):
-
-        """
-        Load parser output.
-        """
-
-        logger.info(
-            "Loading terraform inventory"
-        )
+    def load_json(
+        self,
+        path: Path
+    ) -> Dict[str,Any]:
 
 
-        if not self.resource_file.exists():
+        if not path.exists():
 
-            raise FileNotFoundError(
-
-                f"Resource file missing: {self.resource_file}"
-
+            logger.warning(
+                "File missing: %s",
+                path
             )
+
+            return {}
+
 
 
         with open(
 
-            self.resource_file,
+            path,
 
             "r",
 
@@ -172,428 +157,59 @@ class TerraformModifier:
 
         ) as file:
 
+            return json.load(file)
 
-            self.resources = json.load(
-                file
-            )
+
+
+
+    # -----------------------------------------------------
+    # Load Inventory
+    # -----------------------------------------------------
+
+    def load_inventory(self):
+
+
+        inventory = self.load_json(
+
+            self.inventory_file
+
+        )
+
+
+        resources = inventory.get(
+
+            "resources",
+
+            []
+
+        )
 
 
         logger.info(
 
             "Resources loaded: %s",
 
-            len(
-                self.resources.get(
-                    "resources",
-                    []
-                )
-            )
+            len(resources)
 
         )
 
 
+        return resources
+
+
+
 
     # -----------------------------------------------------
-    # Patch Object Generator
+    # Validate Action
     # -----------------------------------------------------
 
-    def create_patch_object(
+    def validate_action(
         self,
-        action: str,
-        resource: Dict[str, Any],
-        changes: Dict[str, Any]
-    ) -> Dict[str, Any]:
-
-        """
-        Create standard patch object.
-        """
-
-
-        return {
-
-
-            "action":
-
-                action,
-
-
-            "terraform_address":
-
-                resource.get(
-                    "terraform_address"
-                ),
-
-
-            "resource_type":
-
-                resource.get(
-                    "resource_type"
-                ),
-
-
-            "resource_name":
-
-                resource.get(
-                    "resource_name"
-                ),
-
-
-            "source_file":
-
-                resource.get(
-                    "source",
-                    {}
-                ).get(
-                    "file"
-                ),
-
-
-            "changes":
-
-                changes
-
-
-        }
-            # -----------------------------------------------------
-    # Resource Lookup
-    # -----------------------------------------------------
-
-    def find_resource(
-        self,
-        terraform_address: str
-    ) -> Dict[str, Any]:
-        """
-        Find resource using terraform address.
-        """
-
-        resources = self.resources.get(
-            "resources",
-            []
-        )
-
-
-        for resource in resources:
-
-            if resource.get(
-                "terraform_address"
-            ) == terraform_address:
-
-                return resource
-
-
-
-        return {}
-
-
-
-    # -----------------------------------------------------
-    # Generic Attribute Comparison
-    # -----------------------------------------------------
-
-    def compare_attributes(
-        self,
-        current: Dict[str, Any],
-        desired: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Compare resource attributes.
-
-        Works for any terraform resource.
-        """
-
-
-        changes = {}
-
-
-        all_keys = set(
-
-            current.keys()
-
-        ).union(
-
-            desired.keys()
-
-        )
-
-
-
-        for key in all_keys:
-
-
-            current_value = current.get(
-                key
-            )
-
-
-            desired_value = desired.get(
-                key
-            )
-
-
-
-            if current_value != desired_value:
-
-
-                changes[key] = {
-
-
-                    "before":
-
-                        current_value,
-
-
-                    "after":
-
-                        desired_value
-
-
-                }
-
-
-
-        return changes
-
-
-
-    # -----------------------------------------------------
-    # Determine Action
-    # -----------------------------------------------------
-
-    def determine_action(
-        self,
-        current_exists: bool,
-        desired_exists: bool,
-        changes: Dict[str, Any]
-    ) -> str:
-
-        """
-        Determine terraform operation.
-        """
-
-
-        if not current_exists and desired_exists:
-
-            return "create"
-
-
-
-        if current_exists and not desired_exists:
-
-            return "delete"
-
-
-
-        if current_exists and desired_exists:
-
-
-            if changes:
-
-                return "update"
-
-
-            return "none"
-
-
-
-        return "none"
-
-
-
-    # -----------------------------------------------------
-    # Generate Modification Plan
-    # -----------------------------------------------------
-
-    def generate_change(
-        self,
-        terraform_address: str,
-        desired_configuration: Dict[str, Any]
-    ):
-        """
-        Compare desired state with current terraform state.
-        """
-
-
-        resource = self.find_resource(
-
-            terraform_address
-
-        )
-
-
-        current_configuration = {}
-
-
-        if resource:
-
-
-            current_configuration = resource.get(
-
-                "configuration",
-
-                {}
-
-            )
-
-
-
-        changes = self.compare_attributes(
-
-            current_configuration,
-
-            desired_configuration
-
-        )
-
-
-
-        action = self.determine_action(
-
-            bool(resource),
-
-            bool(desired_configuration),
-
-            changes
-
-        )
-
-
-
-        if action == "none":
-
-            return
-
-
-
-        patch = self.create_patch_object(
-
-            action,
-
-            resource,
-
-            changes
-
-        )
-
-
-
-        self.patch_plan["changes"].append(
-
-            patch
-
-        )
-
-
-        self.patch_plan["summary"][action] += 1
-
-
-
-        logger.info(
-
-            "%s planned for %s",
-
-            action,
-
-            terraform_address
-
-        )
-
-
-
-    # -----------------------------------------------------
-    # Process Change Requests
-    # -----------------------------------------------------
-
-    def process_changes(
-        self,
-        change_requests: List[Dict[str, Any]]
-    ):
-        """
-        Process external change requests.
-
-        Example:
-
-        [
-          {
-            "terraform_address":
-                "resource.type.name",
-
-            "configuration":
-                {
-                   "attribute":"value"
-                }
-          }
-        ]
-
-        """
-
-
-        for request in change_requests:
-
-
-            self.generate_change(
-
-                request.get(
-                    "terraform_address"
-                ),
-
-
-                request.get(
-                    "configuration",
-                    {}
-                )
-
-            )
-        # -----------------------------------------------------
-    # Validate Patch Entry
-    # -----------------------------------------------------
-
-    def validate_patch(
-        self,
-        patch: Dict[str, Any]
+        actions: List[str]
     ) -> bool:
-        """
-        Validate generated modification.
-
-        Prevents invalid operations.
-        """
 
 
-        required_fields = [
-
-            "action",
-
-            "terraform_address",
-
-            "changes"
-
-        ]
-
-
-
-        for field in required_fields:
-
-
-            if field not in patch:
-
-
-                logger.error(
-
-                    "Invalid patch missing field: %s",
-
-                    field
-
-                )
-
-
-                return False
-
-
-
-        valid_actions = [
-
-            "create",
-
-            "update",
+        blocked = [
 
             "delete",
 
@@ -603,19 +219,12 @@ class TerraformModifier:
 
 
 
-        if patch["action"] not in valid_actions:
+        for action in actions:
 
 
-            logger.error(
+            if action in blocked:
 
-                "Unsupported action: %s",
-
-                patch["action"]
-
-            )
-
-
-            return False
+                return False
 
 
 
@@ -623,105 +232,210 @@ class TerraformModifier:
 
 
 
+
     # -----------------------------------------------------
-    # Validate Complete Plan
+    # Find Resource
     # -----------------------------------------------------
 
-    def validate_plan(self):
-
-        """
-        Remove invalid patches.
-        """
-
-
-        valid_changes = []
+    def find_resource(
+        self,
+        resource_id: str,
+        inventory: List[Dict[str,Any]]
+    ):
 
 
-
-        for patch in self.patch_plan["changes"]:
-
-
-            if self.validate_patch(
-                patch
-            ):
+        for resource in inventory:
 
 
-                valid_changes.append(
-                    patch
-                )
+            if resource.get(
+                "address"
+            ) == resource_id:
+
+
+                return resource
 
 
 
-        removed = (
+        return None
 
-            len(
-                self.patch_plan["changes"]
-            )
 
-            -
 
-            len(valid_changes)
+
+    # -----------------------------------------------------
+    # Generate Patch
+    # -----------------------------------------------------
+
+    def generate_patch(self):
+
+
+        requests = self.load_json(
+
+            self.change_file
 
         )
 
 
-        if removed:
+        inventory = self.load_inventory()
 
 
-            logger.warning(
 
-                "Removed invalid patches: %s",
+        changes = requests.get(
 
-                removed
+            "changes",
+
+            []
+
+        )
+
+
+
+        logger.info(
+
+            "Approved changes: %s",
+
+            len(changes)
+
+        )
+
+
+
+        for change in changes:
+
+
+            actions = change.get(
+
+                "actions",
+
+                []
 
             )
 
 
 
-        self.patch_plan["changes"] = valid_changes
+            if not self.validate_action(actions):
+
+
+                logger.warning(
+
+                    "Skipping destructive change: %s",
+
+                    change.get(
+                        "resource"
+                    )
+
+                )
+
+                continue
+
+
+
+            resource = self.find_resource(
+
+                change.get(
+                    "resource"
+                ),
+
+                inventory
+
+            )
+
+
+
+            patch = {
+
+
+                "resource":
+
+                    change.get(
+                        "resource"
+                    ),
+
+
+                "type":
+
+                    change.get(
+                        "type"
+                    ),
+
+
+                "action":
+
+                    actions,
+
+
+                "operation":
+
+                    "terraform_update",
+
+
+                "inventory":
+
+                    resource or {}
+
+            }
+
+
+
+            self.patch["changes"].append(
+
+                patch
+
+            )
+
 
 
 
     # -----------------------------------------------------
-    # Detect Duplicate Changes
+    # Dependency Resolver
+    # -----------------------------------------------------
+
+    def add_dependencies(self):
+
+        """
+        Placeholder for dependency graph.
+
+        Future:
+        - module dependency
+        - resource dependency
+        - output dependency
+        """
+
+
+        logger.info(
+
+            "Dependency analysis completed"
+
+        )
+
+
+
+
+    # -----------------------------------------------------
+    # Remove Duplicate
     # -----------------------------------------------------
 
     def remove_duplicates(self):
-
-        """
-        Avoid duplicate modifications
-        for same terraform address.
-        """
 
 
         unique = {}
 
 
 
-        for patch in self.patch_plan["changes"]:
+        for item in self.patch["changes"]:
 
 
-            key = (
+            key = item.get(
 
-                patch.get(
-                    "terraform_address"
-                )
-
-                +
-
-                patch.get(
-                    "action"
-                )
+                "resource"
 
             )
 
 
-
-            unique[key] = patch
-
+            unique[key] = item
 
 
-        self.patch_plan["changes"] = list(
+
+        self.patch["changes"] = list(
 
             unique.values()
 
@@ -729,198 +443,51 @@ class TerraformModifier:
 
 
 
+
     # -----------------------------------------------------
-    # Dependency Mapping
+    # Save Patch
     # -----------------------------------------------------
 
-    def attach_dependencies(self):
-
-        """
-        Attach dependency information
-        if available from parser output.
-        """
+    def save_patch(self):
 
 
-        dependency_map = (
+        self.patch_file.parent.mkdir(
 
-            self.resources.get(
+            parents=True,
 
-                "resource_dependencies",
-
-                {}
-
-            )
+            exist_ok=True
 
         )
 
 
+        with open(
 
-        for patch in self.patch_plan["changes"]:
+            self.patch_file,
+
+            "w",
+
+            encoding="utf-8"
+
+        ) as file:
 
 
-            address = patch.get(
+            json.dump(
 
-                "terraform_address"
+                self.patch,
 
-            )
+                file,
 
-
-            patch["dependencies"] = (
-
-                dependency_map.get(
-
-                    address,
-
-                    []
-
-                )
+                indent=4
 
             )
 
 
 
     # -----------------------------------------------------
-    # Finalize Modification Plan
+    # Execute
     # -----------------------------------------------------
 
-    def finalize_plan(self):
-
-        """
-        Execute all safety validations.
-        """
-
-
-        logger.info(
-
-            "Validating patch plan"
-
-        )
-
-
-        self.validate_plan()
-
-
-
-        logger.info(
-
-            "Removing duplicates"
-
-        )
-
-
-        self.remove_duplicates()
-
-
-
-        logger.info(
-
-            "Adding dependencies"
-
-        )
-
-
-        self.attach_dependencies()
-
-
-
-        self.patch_plan["metadata"][
-
-            "total_changes"
-
-        ] = len(
-
-            self.patch_plan["changes"]
-
-        )
-
-
-
-        return self.patch_plan
-        # -----------------------------------------------------
-    # Save Patch Report
-    # -----------------------------------------------------
-
-    def save_patch_report(self):
-
-        """
-        Write terraform patch plan JSON.
-        """
-
-
-        try:
-
-            self.patch_file.parent.mkdir(
-
-                parents=True,
-
-                exist_ok=True
-
-            )
-
-
-
-            with open(
-
-                self.patch_file,
-
-                "w",
-
-                encoding="utf-8"
-
-            ) as file:
-
-
-                json.dump(
-
-                    self.patch_plan,
-
-                    file,
-
-                    indent=4,
-
-                    default=str
-
-                )
-
-
-
-            logger.info(
-
-                "Patch report generated: %s",
-
-                self.patch_file
-
-            )
-
-
-        except Exception as error:
-
-
-            logger.error(
-
-                "Unable to save patch report: %s",
-
-                error
-
-            )
-
-
-            raise
-
-
-
-    # -----------------------------------------------------
-    # Complete Execution
-    # -----------------------------------------------------
-
-    def execute(
-        self,
-        change_requests: List[Dict[str, Any]]
-    ):
-
-        """
-        Complete modifier workflow.
-        """
+    def execute(self):
 
 
         logger.info(
@@ -930,103 +497,47 @@ class TerraformModifier:
         )
 
 
-        self.load_resources()
+        self.generate_patch()
 
 
-
-        self.process_changes(
-
-            change_requests
-
-        )
+        self.remove_duplicates()
 
 
-
-        self.finalize_plan()
-
+        self.add_dependencies()
 
 
-        self.save_patch_report()
+        self.save_patch()
 
 
 
         logger.info(
 
-            "Terraform Modifier completed"
+            "Patch generated: %s",
 
-        )
-
-
-        return self.patch_plan
-
-
-
-# ---------------------------------------------------------
-# CLI Helpers
-# ---------------------------------------------------------
-
-def load_change_file(
-    path: str
-) -> List[Dict[str, Any]]:
-
-    """
-    Load external change request JSON.
-    """
-
-
-    if not path:
-
-        return []
-
-
-
-    file_path = Path(path)
-
-
-
-    if not file_path.exists():
-
-        raise FileNotFoundError(
-
-            f"Change file not found: {path}"
+            len(
+                self.patch["changes"]
+            )
 
         )
 
 
 
-    with open(
-
-        file_path,
-
-        "r",
-
-        encoding="utf-8"
-
-    ) as file:
+        return self.patch
 
 
-        return json.load(file)
 
 
+# ---------------------------------------------------------
+# CLI
+# ---------------------------------------------------------
 
 def create_arguments():
 
     parser = argparse.ArgumentParser(
 
         description=
-        "Enterprise Terraform Modification Engine"
 
-    )
-
-
-    parser.add_argument(
-
-        "--resources",
-
-        default=DEFAULT_RESOURCE_FILE,
-
-        help=
-        "Terraform resource inventory JSON"
+        "Enterprise Terraform Patch Generator"
 
     )
 
@@ -1035,10 +546,16 @@ def create_arguments():
 
         "--changes",
 
-        required=True,
+        default=DEFAULT_CHANGE_FILE
 
-        help=
-        "Desired change request JSON"
+    )
+
+
+    parser.add_argument(
+
+        "--inventory",
+
+        default=DEFAULT_INVENTORY
 
     )
 
@@ -1047,15 +564,13 @@ def create_arguments():
 
         "--output",
 
-        default=DEFAULT_PATCH_FILE,
-
-        help=
-        "Generated patch report"
+        default=DEFAULT_PATCH
 
     )
 
 
     return parser.parse_args()
+
 
 
 
@@ -1065,68 +580,40 @@ def create_arguments():
 
 def main():
 
-
     args = create_arguments()
 
 
 
-    try:
+    modifier = TerraformModifier(
 
+        change_file=args.changes,
 
-        change_requests = load_change_file(
+        inventory_file=args.inventory,
 
-            args.changes
+        patch_file=args.output
 
-        )
-
-
-
-        modifier = TerraformModifier(
-
-            resource_file=args.resources,
-
-            patch_file=args.output
-
-        )
+    )
 
 
 
-        modifier.execute(
-
-            change_requests
-
-        )
+    result = modifier.execute()
 
 
 
-        print(
-
-            "Terraform modification plan created"
-
-        )
+    print(
+        "Terraform modification plan created"
+    )
 
 
-        print(
-
-            f"Report: {args.output}"
-
-        )
+    print(
+        f"Changes: {len(result['changes'])}"
+    )
 
 
+    print(
+        f"Report: {args.output}"
+    )
 
-    except Exception as error:
-
-
-        logger.exception(
-
-            "Modifier failed: %s",
-
-            error
-
-        )
-
-
-        exit(1)
 
 
 

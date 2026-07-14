@@ -33,23 +33,105 @@ except FileNotFoundError:
 
 resources = []
 
-for item in drift:
+
+# Support new drift report format
+
+if isinstance(drift, dict):
+
+    drift_resources = drift.get(
+        "resources",
+        []
+    )
+
+else:
+
+    drift_resources = drift
+
+
+
+for item in drift_resources:
+
 
     resource = {
-        "resource": item.get("resource"),
-        "type": item.get("type"),
-        "actions": item.get("actions"),
-        "changed_by": item.get("changed_by", "Unknown"),
-        "time": item.get("time", "Unknown")
+
+
+        "resource":
+
+            item.get(
+                "resource"
+            ),
+
+
+        "type":
+
+            item.get(
+                "type"
+            ),
+
+
+        "actions":
+
+            item.get(
+                "actions",
+                []
+            ),
+
+
+        "action":
+
+            item.get(
+                "action",
+                ""
+            ),
+
+
+        "risk":
+
+            item.get(
+                "risk",
+                "Unknown"
+            ),
+
+
+        "changed_by":
+
+            item.get(
+                "changed_by",
+                "Unknown"
+            ),
+
+
+        "time":
+
+            item.get(
+                "time",
+                "Unknown"
+            )
+
     }
 
-    # Only include changed attribute names
-    after = item.get("after")
 
-    if isinstance(after, dict):
-        resource["changed_properties"] = list(after.keys())[:20]
 
-    resources.append(resource)
+    after = item.get(
+        "after"
+    )
+
+
+    if isinstance(
+        after,
+        dict
+    ):
+
+
+        resource["changed_properties"] = list(
+            after.keys()
+        )[:20]
+
+
+
+    resources.append(
+        resource
+    )
 
 # ============================================================
 # Prompt

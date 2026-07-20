@@ -9,7 +9,6 @@ permissions:
   id-token: write # Required for OIDC authentication
   contents: read
   pull-requests: write # Required to post PR comments
-
 env:
   ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
   ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
